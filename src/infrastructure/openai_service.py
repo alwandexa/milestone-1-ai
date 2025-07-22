@@ -136,7 +136,7 @@ class OpenAIService:
             raise Exception(f"Error analyzing multimodal content: {e}")
     
     def extract_text_from_image(self, image_data: bytes) -> str:
-        """Extract text from image using OCR capabilities"""
+        """Analyze image content and detect any extractable text"""
         try:
             image_base64 = base64.b64encode(image_data).decode('utf-8')
             
@@ -148,7 +148,7 @@ class OpenAIService:
                         "content": [
                             {
                                 "type": "text",
-                                "text": "Please extract all text from this image. Return only the extracted text without any additional commentary."
+                                "text": "Please describe what this image shows and indicate if there is any readable text in it. If there is text, include it in your response."
                             },
                             {
                                 "type": "image_url",
@@ -164,9 +164,9 @@ class OpenAIService:
             )
             
             content = response.choices[0].message.content
-            return content if content else "No text extracted"
+            return content if content else "Unable to analyze image"
         except Exception as e:
-            raise Exception(f"Error extracting text from image: {e}")
+            raise Exception(f"Error analyzing image: {e}")
     
     def generate_faq_answer(self, question: str, context_faqs: List[Dict]) -> str:
         """Generate an answer for a question based on FAQ context"""
