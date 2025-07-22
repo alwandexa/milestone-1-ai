@@ -63,18 +63,27 @@ class DocumentProcessor:
                             # Use OpenAI to extract text from image if service is available
                             if self.openai_service:
                                 try:
+                                    print(f"Extracting text from image {img_index + 1} on page {page_num + 1}...")
                                     image_text = self.openai_service.extract_text_from_image(img_data)
                                     if image_text.strip():
                                         full_text += f"\n--- Image {img_index + 1} on page {page_num + 1} ---\n{image_text}\n"
+                                        print(f"✓ Successfully extracted text from image {img_index + 1} on page {page_num + 1}")
+                                    else:
+                                        full_text += f"\n--- Image {img_index + 1} on page {page_num + 1} (no text found) ---\n"
+                                        print(f"⚠ No text found in image {img_index + 1} on page {page_num + 1}")
                                 except Exception as e:
-                                    print(f"Warning: Could not extract text from image: {e}")
+                                    print(f"✗ Error extracting text from image {img_index + 1} on page {page_num + 1}: {e}")
+                                    full_text += f"\n--- Image {img_index + 1} on page {page_num + 1} (extraction failed: {str(e)}) ---\n"
                             else:
+                                print(f"⚠ OpenAI service not available for image {img_index + 1} on page {page_num + 1}")
                                 full_text += f"\n--- Image {img_index + 1} on page {page_num + 1} (text extraction not available) ---\n"
+                        else:
+                            print(f"⚠ Skipping image {img_index + 1} on page {page_num + 1} (unsupported format)")
                         
                         pix = None  # Free memory
                         
                     except Exception as e:
-                        print(f"Warning: Could not process image {img_index} on page {page_num + 1}: {e}")
+                        print(f"✗ Error processing image {img_index} on page {page_num + 1}: {e}")
                         continue
             
             pdf_document.close()
