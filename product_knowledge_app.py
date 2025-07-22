@@ -12,7 +12,7 @@ st.set_page_config(
     page_title="iScaps Product Knowledge",
     page_icon="💊",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS styling
@@ -106,12 +106,12 @@ st.markdown("""
     }
 
     .user-message {
-        background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+        # background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
         border-color: #3b82f6;
     }
 
     .assistant-message {
-        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        # background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
         border-color: #0ea5e9;
     }
 
@@ -158,23 +158,64 @@ st.markdown("""
         border: 2px solid #3b82f6;
     }
 
-    /* Chat layout styling */
+    /* Modern chat layout styling */
     .chat-container {
-        height: 70vh;
+        height: calc(100vh - 300px);
         overflow-y: auto;
         padding: 1rem;
         border: 1px solid #e5e7eb;
-        border-radius: 8px;
+        border-radius: 12px;
         background: #f9fafb;
+        margin-bottom: 1rem;
+        position: relative;
     }
 
-    .input-area {
-        position: sticky;
-        bottom: 0;
-        background: white;
+    /* Main container */
+    .main .block-container {
         padding: 1rem;
-        border-top: 1px solid #e5e7eb;
-        border-radius: 0 0 8px 8px;
+        margin: 1rem;
+        min-height: 100vh;
+    }
+
+
+    /* Message styling */
+    .message-container {
+        margin-bottom: 1.5rem;
+        max-width: 100%;
+    }
+
+    .user-message {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 1rem;
+    }
+
+    .assistant-message {
+        display: flex;
+        justify-content: flex-start;
+        margin-bottom: 1rem;
+    }
+
+    .message-bubble {
+        max-width: 70%;
+        padding: 0.75rem 1rem;
+        border-radius: 18px;
+        word-wrap: break-word;
+        line-height: 1.4;
+        font-size: 0.95rem;
+    }
+
+    .user-bubble {
+        background: linear-gradient(135deg, #3b82f6 0%, #1e40af 100%);
+        color: white;
+        box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+    }
+
+    .assistant-bubble {
+        background: white;
+        border: 1px solid #e5e7eb;
+        color: #1f2937;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
     }
 
     /* Ensure chat messages don't overflow */
@@ -182,30 +223,62 @@ st.markdown("""
         margin-bottom: 1rem;
     }
 
-    /* Make the main container scrollable */
-    .main .block-container {
-        max-height: 100vh;
-        overflow-y: auto;
-    }
-
-    /* Fixed input area styling */
+    /* Hide default chat input container */
     .stChatInputContainer {
-        position: sticky;
-        bottom: 0;
-        background: white;
-        padding: 1rem;
-        border-top: 2px solid #e5e7eb;
-        margin-top: 2rem;
+        display: none;
     }
 
-    /* Ensure proper spacing */
-    .stChatMessage {
-        margin-bottom: 1.5rem;
+    /* Custom input styling */
+    .custom-input-container {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        height: 100%;
     }
 
-    /* Add some bottom padding to ensure input is visible */
-    .main .block-container {
-        padding-bottom: 2rem;
+    .custom-input-field {
+        flex: 1;
+        padding: 0.75rem;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        font-size: 1rem;
+    }
+
+    .custom-upload-area {
+        width: 120px;
+        padding: 0.5rem;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        text-align: center;
+        font-size: 0.875rem;
+        background: #f9fafb;
+    }
+
+    /* Modern chat header */
+    .chat-header {
+        background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 12px 12px 0 0;
+        margin-bottom: 0;
+        font-weight: 600;
+        font-size: 1.2rem;
+    }
+
+    /* Quick action buttons */
+    .quick-action-btn {
+        background: linear-gradient(135deg, #f3f4f6 0%, #e5e7eb 100%);
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        margin: 0.25rem;
+        font-size: 0.875rem;
+        transition: all 0.2s ease;
+    }
+
+    .quick-action-btn:hover {
+        background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
+        transform: translateY(-1px);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -291,14 +364,12 @@ def get_confidence_class(score: float) -> str:
 # Main app
 def main():
     st.title("💊 iScaps Product Knowledge Assistant")
-    st.markdown("---")
     
-    # Sidebar
+    # Sidebar - Simplified to only include upload functionality
     with st.sidebar:
-        st.markdown("### 📚 Document Management")
+        st.markdown("### 📚 Document Upload")
         
         # Upload section
-        st.markdown("#### Upload Product Knowledge")
         uploaded_file = st.file_uploader(
             "Choose a PDF file",
             type=['pdf'],
@@ -334,194 +405,7 @@ def main():
         
         st.markdown("---")
         
-        # Document management
-        st.markdown("#### 📋 Document List")
-        if st.button("🔄 Refresh Documents"):
-            st.rerun()
-        
-        try:
-            documents = list_documents()
-            if documents:
-                for doc in documents:
-                    with st.expander(f"📄 {doc['filename']}"):
-                        st.write(f"**ID:** {doc['id']}")
-                        st.write(f"**Chunks:** {doc['chunk_count']}")
-                        st.write(f"**Product Group:** {doc['product_group'] or 'Not specified'}")
-                        st.write(f"**Uploaded:** {doc['uploaded_at']}")
-                        
-                        if st.button(f"🗑️ Delete", key=f"delete_{doc['id']}"):
-                            try:
-                                delete_document(doc['id'])
-                                st.success("Document deleted!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Delete failed: {str(e)}")
-            else:
-                st.info("No documents uploaded yet.")
-        except Exception as e:
-            st.error(f"Failed to load documents: {str(e)}")
-        
-        st.markdown("---")
-        
-        # Search by product group
-        st.markdown("#### 🔍 Search by Product Group")
-        try:
-            product_groups = get_product_groups()
-            product_group_options = {pg["name"]: pg["value"] for pg in product_groups}
-            
-            selected_search_group = st.selectbox(
-                "Select Product Group to Search",
-                options=[""] + list(product_group_options.keys()),
-                help="Search for documents in a specific product group"
-            )
-            
-            if selected_search_group:
-                search_limit = st.slider("Number of results", 1, 50, 10)
-                
-                if st.button("🔍 Search", type="primary"):
-                    with st.spinner("Searching..."):
-                        try:
-                            response = requests.get(
-                                get_api_url(f"/documents/search/product-group/{product_group_options[selected_search_group]}"),
-                                params={"limit": search_limit}
-                            )
-                            response.raise_for_status()
-                            results = response.json()
-                            
-                            st.success(f"Found {results['count']} chunks in {selected_search_group}")
-                            
-                            for i, chunk in enumerate(results['chunks'], 1):
-                                with st.expander(f"Chunk {i}: {chunk['document_id']}"):
-                                    st.write(f"**Content:** {chunk['content'][:200]}...")
-                                    st.write(f"**Product Group:** {chunk['product_group']}")
-                                    if chunk['metadata']:
-                                        st.write(f"**Metadata:** {chunk['metadata']}")
-                                        
-                        except Exception as e:
-                            st.error(f"Search failed: {str(e)}")
-        except Exception as e:
-            st.error(f"Failed to load product groups for search: {str(e)}")
-    
-    # Main content area
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.markdown("### 🤖 Product Knowledge Chat")
-        
-        # Chat interface
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-        
-        # Display chat messages
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-                
-                # Display image if present in user message
-                if message["role"] == "user" and "image" in message:
-                    st.image(message["image"], caption="Attached Image", use_column_width=True)
-                
-                # Show additional info for assistant messages
-                if message["role"] == "assistant" and "metadata" in message:
-                    metadata = message["metadata"]
-                    
-                    # Multimodal badge
-                    if metadata.get("multimodal_content"):
-                        st.markdown('<span class="multimodal-badge">🖼️ Multimodal</span>', unsafe_allow_html=True)
-                    
-                    # Sources
-                    if "sources" in metadata and metadata["sources"]:
-                        with st.expander("📚 Sources"):
-                            for source in metadata["sources"]:
-                                st.write(f"• {source}")
-                    
-                    # Extracted text from image
-                    if "extracted_text" in metadata and metadata["extracted_text"]:
-                        with st.expander("📝 Text extracted from image"):
-                            st.write(metadata["extracted_text"])
-        
-        # Add spacing to push input to bottom
-        st.markdown("<br>" * 3, unsafe_allow_html=True)
-        
-        # Fixed input area at bottom
-        st.markdown("---")
-        st.markdown("#### 💬 Ask a question (with optional image)")
-        
-        # Create two columns for input and image upload
-        input_col, image_col = st.columns([3, 1])
-        
-        with input_col:
-            prompt = st.chat_input("Ask about product knowledge...")
-        
-        with image_col:
-            uploaded_image = st.file_uploader(
-                "📷 Attach image",
-                type=['png', 'jpg', 'jpeg'],
-                key="chat_image_uploader",
-                help="Attach an image to your message"
-            )
-        
-        # Handle message submission
-        if prompt or uploaded_image:
-            # Add user message
-            message_data = {"role": "user", "content": prompt}
-            if uploaded_image:
-                message_data["image"] = uploaded_image
-                # Only add image if there's also a text prompt
-                if not prompt:
-                    st.error("Please provide a question along with the image.")
-                    return
-            
-            st.session_state.messages.append(message_data)
-            
-            # Display user message
-            with st.chat_message("user"):
-                st.markdown(message_data["content"])
-                if uploaded_image:
-                    st.image(uploaded_image, caption="Attached Image", use_column_width=True)
-            
-            # Get assistant response
-            with st.chat_message("assistant"):
-                with st.spinner("🤔 Thinking..."):
-                    try:
-                        # Prepare image data if present
-                        image_data = None
-                        if uploaded_image:
-                            image_data = uploaded_image.read()
-                            uploaded_image.seek(0)  # Reset file pointer
-                        
-                        # Use unified chat function
-                        response = chat_with_documents(
-                            query=prompt,
-                            image_data=image_data,
-                            session_id=get_current_conversation()
-                        )
-                        
-                        # Display response
-                        st.markdown(response["answer"])
-                        
-                        # Add assistant message with metadata
-                        metadata = {
-                            "sources": response.get("sources", []),
-                            "multimodal_content": response.get("multimodal_content", False),
-                            "extracted_text": response.get("extracted_text")
-                        }
-                        
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": response["answer"],
-                            "metadata": metadata
-                        })
-                        
-                    except Exception as e:
-                        error_msg = f"❌ Error: {str(e)}"
-                        st.error(error_msg)
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": error_msg
-                        })
-    
-    with col2:
+        # Quick actions in sidebar
         st.markdown("### 🎯 Quick Actions")
         
         # New conversation
@@ -533,57 +417,191 @@ def main():
         # Quick questions
         st.markdown("#### 💡 Quick Questions")
         quick_questions = [
-            "What are the main indications for this product?",
-            "What are the common side effects?",
-            "What is the recommended dosage?",
-            "How does this compare to competitors?",
-            "What clinical studies support this product?",
+            "What are the intended uses?",
             "What are the contraindications?",
-            "What patient populations should be considered?",
-            "What are the drug interactions?"
+            "What are the safety precautions?",
+            "How do I operate this device?",
+            "What are the maintenance requirements?",
+            "What are the potential complications?",
+            "What are the device specifications?",
+            "How do I troubleshoot this device?"
         ]
         
         for question in quick_questions:
             if st.button(question, key=f"quick_{question}"):
                 # Add to chat
                 st.session_state.messages.append({"role": "user", "content": question})
+                # Set a flag to trigger chat response
+                st.session_state.quick_question_triggered = question
                 st.rerun()
+    
+    # Main content area - Modern chat interface
+    st.markdown("---")
+    
+    # Chat header
+    st.markdown('<div class="chat-header">🤖 Product Knowledge Chat</div>', unsafe_allow_html=True)
+    
+    # Chat interface
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    
+    
+    # Display chat messages using custom styling
+    for message in st.session_state.messages:
+        if message["role"] == "user":
+            st.markdown(f"""
+            <div class="message-container">
+                <div class="user-message">
+                    <div class="message-bubble user-bubble">
+                        {message["content"]}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Display image if present
+            if "image" in message:
+                st.image(message["image"], caption="Attached Image", width=300)
+        else:
+            st.markdown(f"""
+            <div class="message-container">
+                <div class="assistant-message">
+                    <div class="message-bubble assistant-bubble">
+                        {message["content"]}
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # Show additional info for assistant messages
+            if "metadata" in message:
+                metadata = message["metadata"]
+                
+                # Multimodal badge
+                if metadata.get("multimodal_content"):
+                    st.markdown('<span class="multimodal-badge">🖼️ Multimodal</span>', unsafe_allow_html=True)
+                
+                # Sources
+                if "sources" in metadata and metadata["sources"]:
+                    with st.expander("📚 Sources"):
+                        for source in metadata["sources"]:
+                            st.write(f"• {source}")
+                
+                # Extracted text from image
+                if "extracted_text" in metadata and metadata["extracted_text"]:
+                    with st.expander("📝 Text extracted from image"):
+                        st.write(metadata["extracted_text"])
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Input area
+    # st.markdown('<div class="input-area">', unsafe_allow_html=True)
+    
+    # Custom input interface
+    col1, col2 = st.columns([4, 1])
+    
+    with col1:
+        prompt = st.text_input("Ask about product knowledge...", key="user_input", label_visibility="collapsed")
+    
+    with col2:
+        uploaded_image = st.file_uploader(
+            "📷",
+            type=['png', 'jpg', 'jpeg'],
+            key="chat_image_uploader",
+            label_visibility="collapsed",
+            help="Attach an image to your message"
+        )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Handle message submission
+    if prompt or uploaded_image or st.session_state.get("quick_question_triggered"):
+        # Determine the query to use
+        current_query = prompt
+        if st.session_state.get("quick_question_triggered"):
+            current_query = st.session_state.quick_question_triggered
+            # Clear the trigger
+            del st.session_state.quick_question_triggered
         
-        st.markdown("---")
+        # Add user message
+        message_data = {"role": "user", "content": current_query}
+        if uploaded_image:
+            message_data["image"] = uploaded_image
+            # Only add image if there's also a text prompt
+            if not current_query:
+                st.error("Please provide a question along with the image.")
+                return
         
-        # Multimodal quick actions
-        st.markdown("#### 🖼️ Multimodal Examples")
-        multimodal_examples = [
-            "What does this product label say?",
-            "What are the ingredients in this medication?",
-            "What dosage is shown on this label?",
-            "What are the side effects listed on this package?"
-        ]
+        st.session_state.messages.append(message_data)
         
-        for example in multimodal_examples:
-            if st.button(example, key=f"multimodal_{example}"):
-                st.info("Please upload an image and ask your question in the chat!")
+        # Get assistant response
+        with st.spinner("🤔 Thinking..."):
+            try:
+                # Prepare image data if present
+                image_data = None
+                if uploaded_image:
+                    image_data = uploaded_image.read()
+                    uploaded_image.seek(0)  # Reset file pointer
+                
+                # Use unified chat function
+                response = chat_with_documents(
+                    query=current_query,
+                    image_data=image_data,
+                    session_id=get_current_conversation()
+                )
+                
+                # Add assistant message with metadata
+                metadata = {
+                    "sources": response.get("sources", []),
+                    "multimodal_content": response.get("multimodal_content", False),
+                    "extracted_text": response.get("extracted_text")
+                }
+                
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": response["answer"],
+                    "metadata": metadata
+                })
+                
+                # Clear the input field
+                if "user_input" in st.session_state:
+                    del st.session_state.user_input
+                
+            except Exception as e:
+                error_msg = f"❌ Error: {str(e)}"
+                st.error(error_msg)
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": error_msg
+                })
         
-        st.markdown("---")
-        
-        # System info
-        st.markdown("#### ℹ️ System Info")
+        # Rerun to update the display
+        st.rerun()
+    
+    # System info at bottom
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
         st.markdown(f"**Conversation ID:** {get_current_conversation()}")
+    
+    with col2:
         st.markdown(f"**Messages:** {len(st.session_state.messages)}")
-        
+    
+    with col3:
         if st.session_state.messages:
-            st.markdown("**Last Query:** " + st.session_state.messages[-1]["content"][:50] + "...")
-        
-        # Chat tips
-        st.markdown("---")
-        st.markdown("#### 💡 Chat Tips")
-        st.markdown("""
-        - **Text only**: Just type your question
-        - **With image**: Upload an image and ask about it
-        - **Product labels**: Upload medication labels for analysis
-        - **Medical images**: Share medical images for insights
-        - **Documents**: Upload PDFs to build knowledge base
-        """)
+            st.markdown("**Last Query:** " + st.session_state.messages[-1]["content"][:30] + "...")
+    
+    # Chat tips
+    st.markdown("---")
+    st.markdown("#### 💡 Chat Tips")
+    st.markdown("""
+    - **Text only**: Just type your question
+    - **With image**: Upload an image and ask about it
+    - **Product labels**: Upload medication labels for analysis
+    - **Medical images**: Share medical images for insights
+    - **Documents**: Upload PDFs to build knowledge base
+    """)
 
 if __name__ == "__main__":
     main() 
