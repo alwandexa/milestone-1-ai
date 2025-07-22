@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, TypedDict, Optional
+from typing import List, Dict, Any, TypedDict, Optional, Union
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -10,6 +10,7 @@ from src.usecase.document_usecase import DocumentUsecase
 from src.infrastructure.langsmith_setup import setup_langsmith, get_tracer
 import os
 from pydantic import SecretStr
+import base64
 
 
 class ChatState(TypedDict):
@@ -21,6 +22,9 @@ class ChatState(TypedDict):
     context: str
     answer: str
     sources: List[str]
+    image_data: Optional[bytes]
+    multimodal_content: bool
+    extracted_text: Optional[str]
 
 
 class LangGraphChat:
@@ -48,18 +52,20 @@ class LangGraphChat:
         self.graph = self._create_graph()
 
     def _create_graph(self) -> StateGraph:
-        """Create the LangGraph workflow"""
+        """Create the LangGraph workflow with multimodal support"""
 
         # Define the state schema
         workflow = StateGraph(ChatState)
 
         # Add nodes
+        workflow.add_node("process_multimodal_input", self._process_multimodal_input)
         workflow.add_node("search_documents", self._search_documents)
         workflow.add_node("evaluate_results", self._evaluate_results)
         workflow.add_node("generate_answer", self._generate_answer)
         workflow.add_node("modify_query", self._modify_query)
 
         # Define edges
+        workflow.add_edge("process_multimodal_input", "search_documents")
         workflow.add_edge("search_documents", "evaluate_results")
         workflow.add_conditional_edges(
             "evaluate_results",
@@ -70,10 +76,35 @@ class LangGraphChat:
         workflow.add_edge("generate_answer", END)
 
         # Set entry point
-        workflow.set_entry_point("search_documents")
+        workflow.set_entry_point("process_multimodal_input")
 
         # Return the compiled workflow, but type as Any to avoid mypy type error
         return workflow.compile(checkpointer=self.memory)  # type: ignore
+
+    def _process_multimodal_input(self, state: ChatState) -> ChatState:
+        """Process multimodal input (text + image)"""
+        query = state["query"]
+        image_data = state.get("image_data")
+        
+        if image_data:
+            # Extract text from image if present
+            try:
+                extracted_text = self.openai_service.extract_text_from_image(image_data)
+                state["extracted_text"] = extracted_text
+                
+                # Combine original query with extracted text
+                combined_query = f"{query}\n\nExtracted text from image: {extracted_text}"
+                state["query"] = combined_query
+                state["multimodal_content"] = True
+            except Exception as e:
+                # If image processing fails, continue with original query
+                state["multimodal_content"] = False
+                state["extracted_text"] = None
+        else:
+            state["multimodal_content"] = False
+            state["extracted_text"] = None
+        
+        return state
 
     def _search_documents(self, state: ChatState) -> ChatState:
         """Search for relevant document chunks"""
@@ -162,41 +193,68 @@ class LangGraphChat:
         return state
 
     def _generate_answer(self, state: ChatState) -> ChatState:
-        """Generate final answer based on context"""
+        """Generate final answer based on context and multimodal content"""
         query = state["original_query"]
         context = state.get("context", "")
         search_results = state["search_results"]
+        image_data = state.get("image_data")
+        multimodal_content = state.get("multimodal_content", False)
 
-        if not context:
+        if not context and not multimodal_content:
             state["answer"] = (
                 "I couldn't find relevant information to answer your question."
             )
             return state
 
-        # Generate answer using context
-        answer_prompt = ChatPromptTemplate.from_template(
+        if multimodal_content and image_data:
+            # Use multimodal analysis
+            try:
+                combined_context = f"Document context: {context}\n\nQuery: {query}"
+                answer = self.openai_service.analyze_multimodal_content(
+                    text=combined_context,
+                    image_data=image_data,
+                    prompt="Based on the provided document context and image, please answer the user's question. If the image contains relevant information, incorporate it into your response."
+                )
+                state["answer"] = answer
+            except Exception as e:
+                # Fallback to text-only analysis
+                answer_prompt = ChatPromptTemplate.from_template(
+                    """
+                Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                
+                Context: {context}
+                Question: {query}
+                
+                Provide a clear and helpful answer:
+                """
+                )
+                chain = answer_prompt | self.llm
+                result = chain.invoke({"query": query, "context": context})
+                result_text = str(result.content) if hasattr(result, "content") else str(result)
+                state["answer"] = result_text
+        else:
+            # Text-only analysis
+            answer_prompt = ChatPromptTemplate.from_template(
+                """
+            Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+            
+            Context: {context}
+            Question: {query}
+            
+            Provide a clear and helpful answer:
             """
-        Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
-        
-        Context: {context}
-        Question: {query}
-        
-        Provide a clear and helpful answer:
-        """
-        )
+            )
+            chain = answer_prompt | self.llm
+            result = chain.invoke({"query": query, "context": context})
+            result_text = str(result.content) if hasattr(result, "content") else str(result)
+            state["answer"] = result_text
 
-        chain = answer_prompt | self.llm
-        result = chain.invoke({"query": query, "context": context})
-
-        # Convert result to string
-        result_text = str(result.content) if hasattr(result, "content") else str(result)
-        state["answer"] = result_text
         state["sources"] = [chunk.document_id for chunk in search_results]
 
         return state
 
-    def chat(self, query: str, session_id: Optional[str] = None) -> Dict[str, Any]:
-        """Chat with the document-based system"""
+    def chat(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None) -> Dict[str, Any]:
+        """Chat with the document-based system with multimodal support"""
         # Always provide a thread_id for the checkpointer
         if not session_id:
             session_id = "default_session"
@@ -213,7 +271,11 @@ class LangGraphChat:
             context="",
             answer="",
             sources=[],
+            image_data=image_data,
+            multimodal_content=False,
+            extracted_text=None,
         )
+        
         # Run the graph
         result = self.graph.invoke(state, config)
 
@@ -222,4 +284,6 @@ class LangGraphChat:
             "sources": result["sources"],
             "search_count": result["search_count"],
             "context": result.get("context", ""),
+            "multimodal_content": result.get("multimodal_content", False),
+            "extracted_text": result.get("extracted_text"),
         }
