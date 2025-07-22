@@ -25,9 +25,8 @@ def setup_dependencies():
     langgraph_chat = LangGraphChat(openai_service, document_usecase)
     
     # Set the dependencies in the controller
-    import src.controller.document_controller as controller_module
-    controller_module.document_usecase = document_usecase
-    controller_module.langgraph_chat = langgraph_chat
+    from src.controller.document_controller import set_dependencies
+    set_dependencies(document_usecase, langgraph_chat)
     
     return document_usecase, langgraph_chat
 
@@ -43,4 +42,4 @@ if __name__ == "__main__":
     print("---")
     
     # Start the server
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False) 

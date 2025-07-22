@@ -43,18 +43,24 @@ class ProductGroupResponse(BaseModel):
     name: str
 
 # Dependency injection
-document_usecase: Optional[DocumentUsecase] = None
-langgraph_chat: Optional[LangGraphChat] = None
+_document_usecase: Optional[DocumentUsecase] = None
+_langgraph_chat: Optional[LangGraphChat] = None
+
+def set_dependencies(document_usecase: DocumentUsecase, langgraph_chat: LangGraphChat):
+    """Set the dependencies for the controller"""
+    global _document_usecase, _langgraph_chat
+    _document_usecase = document_usecase
+    _langgraph_chat = langgraph_chat
 
 def get_document_usecase() -> DocumentUsecase:
-    if document_usecase is None:
+    if _document_usecase is None:
         raise HTTPException(status_code=500, detail="Document usecase not initialized")
-    return document_usecase
+    return _document_usecase
 
 def get_langgraph_chat() -> LangGraphChat:
-    if langgraph_chat is None:
+    if _langgraph_chat is None:
         raise HTTPException(status_code=500, detail="LangGraph chat not initialized")
-    return langgraph_chat
+    return _langgraph_chat
 
 @app.post("/documents/upload")
 async def upload_document(
@@ -172,7 +178,8 @@ async def list_documents():
         error_details = traceback.format_exc()
         print(f"Error in list_documents: {e}")
         print(f"Traceback: {error_details}")
-        raise HTTPException(status_code=500, detail=f"Error listing documents: {str(e)}")
+        error_msg = str(e) if str(e) else "Unknown error occurred"
+        raise HTTPException(status_code=500, detail=f"Error listing documents: {error_msg}")
 
 @app.get("/documents/product-group/{product_group}", response_model=List[DocumentResponse])
 async def list_documents_by_product_group(product_group: str):
@@ -247,7 +254,8 @@ async def get_product_groups():
             for group in product_groups
         ]
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting product groups: {str(e)}")
+        error_msg = str(e) if str(e) else "Unknown error occurred"
+        raise HTTPException(status_code=500, detail=f"Error getting product groups: {error_msg}")
 
 @app.delete("/documents/{document_id}")
 async def delete_document(document_id: str):
