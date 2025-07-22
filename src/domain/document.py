@@ -4,22 +4,22 @@ from datetime import datetime
 from enum import Enum
 
 class ProductGroup(Enum):
-    """Product groups for categorization"""
-    CARDIOVASCULAR = "cardiovascular"
-    RESPIRATORY = "respiratory"
-    DIABETES = "diabetes"
-    ONCOLOGY = "oncology"
-    NEUROLOGY = "neurology"
-    GASTROENTEROLOGY = "gastroenterology"
-    DERMATOLOGY = "dermatology"
-    PEDIATRICS = "pediatrics"
-    WOMENS_HEALTH = "womens_health"
-    MENS_HEALTH = "mens_health"
-    INFECTIOUS_DISEASE = "infectious_disease"
-    PAIN_MANAGEMENT = "pain_management"
-    PSYCHIATRY = "psychiatry"
-    ENDOCRINOLOGY = "endocrinology"
-    RHEUMATOLOGY = "rheumatology"
+    """Product groups for medical device categorization"""
+    IMAGING_EQUIPMENT = "imaging_equipment"  # MRI, CT, X-ray, etc.
+    SURGICAL_INSTRUMENTS = "surgical_instruments"  # Scalpels, forceps, etc.
+    MONITORING_DEVICES = "monitoring_devices"  # Patient monitors, ECG, etc.
+    DIAGNOSTIC_EQUIPMENT = "diagnostic_equipment"  # Lab analyzers, testing devices
+    THERAPEUTIC_DEVICES = "therapeutic_devices"  # Infusion pumps, ventilators
+    ORTHOPEDIC_DEVICES = "orthopedic_devices"  # Implants, prosthetics
+    CARDIOVASCULAR_DEVICES = "cardiovascular_devices"  # Stents, pacemakers
+    RESPIRATORY_DEVICES = "respiratory_devices"  # Ventilators, oxygen therapy
+    DENTAL_EQUIPMENT = "dental_equipment"  # Dental chairs, tools
+    STERILIZATION_EQUIPMENT = "sterilization_equipment"  # Autoclaves, sanitizers
+    MOBILITY_AIDS = "mobility_aids"  # Wheelchairs, walkers
+    WOUND_CARE_DEVICES = "wound_care_devices"  # Dressings, negative pressure
+    SURGICAL_IMPLANTS = "surgical_implants"  # Various medical implants
+    DISPOSABLE_SUPPLIES = "disposable_supplies"  # Single-use medical items
+    REHABILITATION_EQUIPMENT = "rehabilitation_equipment"  # Physical therapy devices
     OTHER = "other"
 
 @dataclass(frozen=True)
