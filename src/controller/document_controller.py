@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from src.usecase.document_usecase import DocumentUsecase
 from src.infrastructure.langgraph_chat import LangGraphChat
-from src.domain.document import Document, ProductGroup, ProductKnowledgeQuery, ProductKnowledgeResponse
+from src.domain.document import Document, ProductGroup, DocumentQuery, DocumentResponse
 import uuid
 
 app = FastAPI(title="Product Knowledge API", version="1.0.0")

@@ -1,5 +1,5 @@
 from typing import List, Optional
-from src.domain.document import Document, DocumentChunk, ProductGroup, ProductKnowledgeQuery, ProductKnowledgeResponse
+from src.domain.document import Document, DocumentChunk, ProductGroup, DocumentQuery, DocumentResponse
 from src.ports.document_repository_port import DocumentRepositoryPort
 from src.infrastructure.document_processor import DocumentProcessor
 from src.infrastructure.openai_service import OpenAIService
@@ -79,7 +79,7 @@ class DocumentUsecase:
         """Search for documents by product group only"""
         return self.repository.search_by_product_group(product_group, top_k)
 
-    async def query_product_knowledge(self, query: ProductKnowledgeQuery) -> ProductKnowledgeResponse:
+    async def query_product_knowledge(self, query: DocumentQuery) -> DocumentResponse:
         """Query product knowledge using the LangGraph workflow"""
         return await self.langgraph_workflow.execute_workflow(query)
 
