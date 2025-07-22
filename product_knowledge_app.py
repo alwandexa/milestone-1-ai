@@ -150,6 +150,63 @@ st.markdown("""
         margin: 0.5rem 0;
         background: #f8fafc;
     }
+
+    .message-image {
+        max-width: 300px;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        border: 2px solid #3b82f6;
+    }
+
+    /* Chat layout styling */
+    .chat-container {
+        height: 70vh;
+        overflow-y: auto;
+        padding: 1rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        background: #f9fafb;
+    }
+
+    .input-area {
+        position: sticky;
+        bottom: 0;
+        background: white;
+        padding: 1rem;
+        border-top: 1px solid #e5e7eb;
+        border-radius: 0 0 8px 8px;
+    }
+
+    /* Ensure chat messages don't overflow */
+    .stChatMessage {
+        margin-bottom: 1rem;
+    }
+
+    /* Make the main container scrollable */
+    .main .block-container {
+        max-height: 100vh;
+        overflow-y: auto;
+    }
+
+    /* Fixed input area styling */
+    .stChatInputContainer {
+        position: sticky;
+        bottom: 0;
+        background: white;
+        padding: 1rem;
+        border-top: 2px solid #e5e7eb;
+        margin-top: 2rem;
+    }
+
+    /* Ensure proper spacing */
+    .stChatMessage {
+        margin-bottom: 1.5rem;
+    }
+
+    /* Add some bottom padding to ensure input is visible */
+    .main .block-container {
+        padding-bottom: 2rem;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -171,39 +228,18 @@ def upload_document(file_content: bytes, filename: str, product_group: Optional[
     response.raise_for_status()
     return response.json()
 
-def query_product_knowledge(query: str, product_group: Optional[str] = None, session_id: Optional[str] = None) -> Dict:
-    """Query product knowledge using agentic workflow"""
-    payload = {
-        "query": query,
-        "session_id": session_id
-    }
-    if product_group:
-        payload["product_group"] = product_group
-    
-    response = requests.post(get_api_url("/product-knowledge/query"), json=payload)
-    response.raise_for_status()
-    return response.json()
-
-def query_product_knowledge_multimodal(query: str, image_data: bytes, product_group: Optional[str] = None, session_id: Optional[str] = None) -> Dict:
-    """Query product knowledge with multimodal support"""
-    files = {"image": ("image.jpg", image_data, "image/jpeg")}
+def chat_with_documents(query: str, image_data: Optional[bytes] = None, session_id: Optional[str] = None) -> Dict:
+    """Unified chat function that works like ChatGPT - supports both text and images"""
+    files = {}
     data = {
         "query": query,
         "session_id": session_id
     }
-    if product_group:
-        data["product_group"] = product_group
     
-    response = requests.post(get_api_url("/product-knowledge/multimodal-query"), files=files, data=data)
-    response.raise_for_status()
-    return response.json()
-
-def analyze_image(image_data: bytes, prompt: str = "Please analyze this image and describe what you see.") -> Dict:
-    """Analyze image using multimodal AI"""
-    files = {"image": ("image.jpg", image_data, "image/jpeg")}
-    data = {"prompt": prompt}
+    if image_data:
+        files["image"] = ("image.jpg", image_data, "image/jpeg")
     
-    response = requests.post(get_api_url("/analyze-image"), files=files, data=data)
+    response = requests.post(get_api_url("/chat"), files=files, data=data)
     response.raise_for_status()
     return response.json()
 
@@ -372,55 +408,6 @@ def main():
     with col1:
         st.markdown("### 🤖 Product Knowledge Chat")
         
-        # Product group filter for chat
-        try:
-            product_groups = get_product_groups()
-            product_group_options = {pg["name"]: pg["value"] for pg in product_groups}
-            
-            selected_chat_product_group = st.selectbox(
-                "Filter by Product Group (Optional)",
-                options=[""] + list(product_group_options.keys()),
-                help="Filter responses to specific product groups"
-            )
-        except:
-            selected_chat_product_group = ""
-            product_group_options = {}
-        
-        # Multimodal chat interface
-        st.markdown("#### 📸 Multimodal Input")
-        
-        # Image upload for multimodal chat
-        uploaded_image = st.file_uploader(
-            "Upload an image (optional)",
-            type=['png', 'jpg', 'jpeg'],
-            help="Upload an image to analyze along with your text query"
-        )
-        
-        # Display uploaded image
-        if uploaded_image is not None:
-            st.markdown("**📷 Uploaded Image:**")
-            image = Image.open(uploaded_image)
-            st.image(image, caption="Uploaded Image", use_column_width=True)
-            
-            # Image analysis option
-            if st.button("🔍 Analyze Image Only"):
-                with st.spinner("Analyzing image..."):
-                    try:
-                        image_data = uploaded_image.read()
-                        uploaded_image.seek(0)  # Reset file pointer
-                        
-                        result = analyze_image(image_data)
-                        
-                        st.success("✅ Image analysis complete!")
-                        st.markdown("**📊 Analysis:**")
-                        st.write(result["analysis"])
-                        
-                        if result.get("extracted_text"):
-                            st.markdown("**📝 Extracted Text:**")
-                            st.write(result["extracted_text"])
-                    except Exception as e:
-                        st.error(f"❌ Image analysis failed: {str(e)}")
-        
         # Chat interface
         if "messages" not in st.session_state:
             st.session_state.messages = []
@@ -430,6 +417,10 @@ def main():
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
                 
+                # Display image if present in user message
+                if message["role"] == "user" and "image" in message:
+                    st.image(message["image"], caption="Attached Image", use_column_width=True)
+                
                 # Show additional info for assistant messages
                 if message["role"] == "assistant" and "metadata" in message:
                     metadata = message["metadata"]
@@ -438,64 +429,79 @@ def main():
                     if metadata.get("multimodal_content"):
                         st.markdown('<span class="multimodal-badge">🖼️ Multimodal</span>', unsafe_allow_html=True)
                     
-                    # Confidence score
-                    if "confidence_score" in metadata:
-                        confidence_class = get_confidence_class(metadata["confidence_score"])
-                        st.markdown(f"**Confidence:** <span class='{confidence_class}'>{metadata['confidence_score']:.2f}</span>", unsafe_allow_html=True)
-                    
-                    # Product group
-                    if "product_group" in metadata and metadata["product_group"]:
-                        st.markdown(f"**Product Group:** {metadata['product_group']}")
+                    # Sources
+                    if "sources" in metadata and metadata["sources"]:
+                        with st.expander("📚 Sources"):
+                            for source in metadata["sources"]:
+                                st.write(f"• {source}")
                     
                     # Extracted text from image
                     if "extracted_text" in metadata and metadata["extracted_text"]:
                         with st.expander("📝 Text extracted from image"):
                             st.write(metadata["extracted_text"])
-                    
-                    # Suggested follow-up
-                    if "suggested_follow_up" in metadata and metadata["suggested_follow_up"]:
-                        st.info(f"💡 **Suggested follow-up:** {metadata['suggested_follow_up']}")
         
-        # Chat input
-        if prompt := st.chat_input("Ask about product knowledge..."):
+        # Add spacing to push input to bottom
+        st.markdown("<br>" * 3, unsafe_allow_html=True)
+        
+        # Fixed input area at bottom
+        st.markdown("---")
+        st.markdown("#### 💬 Ask a question (with optional image)")
+        
+        # Create two columns for input and image upload
+        input_col, image_col = st.columns([3, 1])
+        
+        with input_col:
+            prompt = st.chat_input("Ask about product knowledge...")
+        
+        with image_col:
+            uploaded_image = st.file_uploader(
+                "📷 Attach image",
+                type=['png', 'jpg', 'jpeg'],
+                key="chat_image_uploader",
+                help="Attach an image to your message"
+            )
+        
+        # Handle message submission
+        if prompt or uploaded_image:
             # Add user message
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            message_data = {"role": "user", "content": prompt}
+            if uploaded_image:
+                message_data["image"] = uploaded_image
+                # Only add image if there's also a text prompt
+                if not prompt:
+                    st.error("Please provide a question along with the image.")
+                    return
+            
+            st.session_state.messages.append(message_data)
             
             # Display user message
             with st.chat_message("user"):
-                st.markdown(prompt)
+                st.markdown(message_data["content"])
+                if uploaded_image:
+                    st.image(uploaded_image, caption="Attached Image", use_column_width=True)
             
             # Get assistant response
             with st.chat_message("assistant"):
                 with st.spinner("🤔 Thinking..."):
                     try:
-                        if uploaded_image is not None:
-                            # Multimodal query
+                        # Prepare image data if present
+                        image_data = None
+                        if uploaded_image:
                             image_data = uploaded_image.read()
                             uploaded_image.seek(0)  # Reset file pointer
-                            
-                            response = query_product_knowledge_multimodal(
-                                query=prompt,
-                                image_data=image_data,
-                                product_group=product_group_options.get(selected_chat_product_group) if selected_chat_product_group else None,
-                                session_id=get_current_conversation()
-                            )
-                        else:
-                            # Text-only query
-                            response = query_product_knowledge(
-                                query=prompt,
-                                product_group=product_group_options.get(selected_chat_product_group) if selected_chat_product_group else None,
-                                session_id=get_current_conversation()
-                            )
+                        
+                        # Use unified chat function
+                        response = chat_with_documents(
+                            query=prompt,
+                            image_data=image_data,
+                            session_id=get_current_conversation()
+                        )
                         
                         # Display response
                         st.markdown(response["answer"])
                         
                         # Add assistant message with metadata
                         metadata = {
-                            "confidence_score": response.get("confidence_score", 0.8),
-                            "product_group": response.get("product_group"),
-                            "suggested_follow_up": response.get("suggested_follow_up"),
                             "sources": response.get("sources", []),
                             "multimodal_content": response.get("multimodal_content", False),
                             "extracted_text": response.get("extracted_text")
@@ -546,16 +552,16 @@ def main():
         st.markdown("---")
         
         # Multimodal quick actions
-        st.markdown("#### 🖼️ Multimodal Actions")
-        multimodal_actions = [
-            "Analyze this product label",
-            "What does this medical image show?",
-            "Extract text from this document",
-            "Compare this image with product information"
+        st.markdown("#### 🖼️ Multimodal Examples")
+        multimodal_examples = [
+            "What does this product label say?",
+            "What are the ingredients in this medication?",
+            "What dosage is shown on this label?",
+            "What are the side effects listed on this package?"
         ]
         
-        for action in multimodal_actions:
-            if st.button(action, key=f"multimodal_{action}"):
+        for example in multimodal_examples:
+            if st.button(example, key=f"multimodal_{example}"):
                 st.info("Please upload an image and ask your question in the chat!")
         
         st.markdown("---")
@@ -568,11 +574,16 @@ def main():
         if st.session_state.messages:
             st.markdown("**Last Query:** " + st.session_state.messages[-1]["content"][:50] + "...")
         
-        # Multimodal status
-        if uploaded_image is not None:
-            st.markdown("**🖼️ Image Ready:** Yes")
-        else:
-            st.markdown("**🖼️ Image Ready:** No")
+        # Chat tips
+        st.markdown("---")
+        st.markdown("#### 💡 Chat Tips")
+        st.markdown("""
+        - **Text only**: Just type your question
+        - **With image**: Upload an image and ask about it
+        - **Product labels**: Upload medication labels for analysis
+        - **Medical images**: Share medical images for insights
+        - **Documents**: Upload PDFs to build knowledge base
+        """)
 
 if __name__ == "__main__":
     main() 
