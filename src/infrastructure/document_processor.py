@@ -1,22 +1,22 @@
 import PyPDF2
 import io
-from typing import List
+from typing import List, Optional
 import uuid
 from datetime import datetime
-from src.domain.document import Document, DocumentChunk
+from src.domain.document import Document, DocumentChunk, ProductGroup
 
 class DocumentProcessor:
     def __init__(self, chunk_size: int = 1000, chunk_overlap: int = 200):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
-    def process_pdf(self, file_content: bytes, filename: str) -> Document:
+    def process_pdf(self, file_content: bytes, filename: str, product_group: Optional[ProductGroup] = None) -> Document:
         """Process PDF file and create document with chunks"""
         # Extract text from PDF
         text = self._extract_text_from_pdf(file_content)
         
-        # Create chunks
-        chunks = self._create_chunks(text, filename)
+        # Create chunks with product group metadata
+        chunks = self._create_chunks(text, filename, product_group)
         
         # Create document
         document = Document(
@@ -24,7 +24,8 @@ class DocumentProcessor:
             filename=filename,
             content=text,
             chunks=chunks,
-            uploaded_at=datetime.now()
+            uploaded_at=datetime.now(),
+            product_group=product_group
         )
         
         return document
@@ -43,8 +44,8 @@ class DocumentProcessor:
         except Exception as e:
             raise Exception(f"Error extracting text from PDF: {e}")
 
-    def _create_chunks(self, text: str, document_id: str) -> List[DocumentChunk]:
-        """Create chunks based on Q&A pairs"""
+    def _create_chunks(self, text: str, document_id: str, product_group: Optional[ProductGroup] = None) -> List[DocumentChunk]:
+        """Create chunks with product group metadata"""
         chunks = []
         
         # First, try to split by numbered questions if the text contains them
@@ -62,17 +63,19 @@ class DocumentProcessor:
                         "qa_index": qa_index,
                         "question": question,
                         "answer": answer,
-                        "chunk_type": "qa_pair"
-                    }
+                        "chunk_type": "qa_pair",
+                        "product_group": product_group.value if product_group else None
+                    },
+                    product_group=product_group
                 )
                 chunks.append(chunk)
         else:
             # Fall back to line-by-line processing
-            chunks = self._create_chunks_line_by_line(text, document_id)
+            chunks = self._create_chunks_line_by_line(text, document_id, product_group)
         
         # If still no chunks, fall back to original chunking strategy
         if not chunks:
-            return self._create_fallback_chunks(text, document_id)
+            return self._create_fallback_chunks(text, document_id, product_group)
         
         return chunks
     
@@ -120,7 +123,7 @@ class DocumentProcessor:
         
         return qa_pairs
     
-    def _create_chunks_line_by_line(self, text: str, document_id: str) -> List[DocumentChunk]:
+    def _create_chunks_line_by_line(self, text: str, document_id: str, product_group: Optional[ProductGroup] = None) -> List[DocumentChunk]:
         """Create chunks using line-by-line processing"""
         chunks = []
         
@@ -147,8 +150,10 @@ class DocumentProcessor:
                             "qa_index": qa_index,
                             "question": current_qa["question"],
                             "answer": current_qa["answer"],
-                            "chunk_type": "qa_pair"
-                        }
+                            "chunk_type": "qa_pair",
+                            "product_group": product_group.value if product_group else None
+                        },
+                        product_group=product_group
                     )
                     chunks.append(chunk)
                     qa_index += 1
@@ -174,8 +179,10 @@ class DocumentProcessor:
                     "qa_index": qa_index,
                     "question": current_qa["question"],
                     "answer": current_qa["answer"],
-                    "chunk_type": "qa_pair"
-                }
+                    "chunk_type": "qa_pair",
+                    "product_group": product_group.value if product_group else None
+                },
+                product_group=product_group
             )
             chunks.append(chunk)
         
@@ -220,7 +227,7 @@ class DocumentProcessor:
         
         return False
     
-    def _create_fallback_chunks(self, text: str, document_id: str) -> List[DocumentChunk]:
+    def _create_fallback_chunks(self, text: str, document_id: str, product_group: Optional[ProductGroup] = None) -> List[DocumentChunk]:
         """Fallback to original chunking strategy if no Q&A pairs found"""
         chunks = []
         start = 0
@@ -247,8 +254,10 @@ class DocumentProcessor:
                         "start_pos": start,
                         "end_pos": end,
                         "chunk_index": len(chunks),
-                        "chunk_type": "fallback"
-                    }
+                        "chunk_type": "fallback",
+                        "product_group": product_group.value if product_group else None
+                    },
+                    product_group=product_group
                 )
                 chunks.append(chunk)
             
