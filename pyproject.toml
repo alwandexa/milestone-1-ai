@@ -1,5 +1,5 @@
 [project]
-name = "faq-chatbot"
+name = "milestone-1"
 version = "0.1.0"
 description = "FAQ Chatbot with Clean Architecture using Streamlit and Milvus"
 authors = [

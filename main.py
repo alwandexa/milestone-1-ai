@@ -10,7 +10,7 @@ from src.infrastructure.openai_service import OpenAIService
 from src.infrastructure.langgraph_chat import LangGraphChat
 
 def setup_dependencies():
-    """Setup dependency injection for document chatbot"""
+    """Setup dependency injection for product knowledge system"""
     # Initialize infrastructure
     openai_service = OpenAIService()
     document_processor = DocumentProcessor()
@@ -34,6 +34,13 @@ def setup_dependencies():
 if __name__ == "__main__":
     # Setup dependencies
     document_usecase, langgraph_chat = setup_dependencies()
+    
+    print("🚀 Starting iScaps Product Knowledge API...")
+    print("📚 Product Knowledge System with Agentic Workflow")
+    print("🔗 API available at: http://localhost:8000")
+    print("📖 API documentation at: http://localhost:8000/docs")
+    print("💊 Streamlit app available at: http://localhost:8501")
+    print("---")
     
     # Start the server
     uvicorn.run(app, host="0.0.0.0", port=8000) 
