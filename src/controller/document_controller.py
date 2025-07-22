@@ -109,8 +109,16 @@ async def query_product_knowledge(request: ProductKnowledgeRequest):
             session_id=request.session_id
         )
         
+        print(f"Processing query: {request.query}")
+        print(f"Product group: {product_group_enum}")
+        print(f"Session ID: {request.session_id}")
+        
         # Execute workflow
         response = await usecase.query_product_knowledge(query)
+        
+        print(f"Workflow completed successfully")
+        print(f"Answer length: {len(response.answer)}")
+        print(f"Confidence score: {response.confidence_score}")
         
         return ProductKnowledgeResponseModel(
             answer=response.answer,
@@ -120,6 +128,10 @@ async def query_product_knowledge(request: ProductKnowledgeRequest):
             suggested_follow_up=response.suggested_follow_up
         )
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        print(f"Error in product knowledge query: {e}")
+        print(f"Traceback: {error_details}")
         raise HTTPException(status_code=500, detail=f"Error in product knowledge query: {str(e)}")
 
 @app.post("/chat", response_model=ChatResponse)

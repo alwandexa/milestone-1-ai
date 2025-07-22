@@ -3,6 +3,7 @@ from src.domain.document import Document, DocumentChunk, ProductGroup, ProductKn
 from src.ports.document_repository_port import DocumentRepositoryPort
 from src.infrastructure.document_processor import DocumentProcessor
 from src.infrastructure.openai_service import OpenAIService
+from src.agents.langgraph_workflow import LangGraphProductKnowledgeWorkflow
 import uuid
 
 class DocumentUsecase:
@@ -10,15 +11,14 @@ class DocumentUsecase:
         self.repository = repository
         self.processor = processor
         self.openai_service = openai_service
-        self._workflow_orchestrator = None
+        self._langgraph_workflow = None
 
     @property
-    def workflow_orchestrator(self):
-        """Lazy initialization of workflow orchestrator to avoid circular imports"""
-        if self._workflow_orchestrator is None:
-            from src.agents.workflow_orchestrator import WorkflowOrchestrator
-            self._workflow_orchestrator = WorkflowOrchestrator(self.openai_service, self)
-        return self._workflow_orchestrator
+    def langgraph_workflow(self):
+        """Lazy initialization of LangGraph workflow to avoid circular imports"""
+        if self._langgraph_workflow is None:
+            self._langgraph_workflow = LangGraphProductKnowledgeWorkflow(self.openai_service, self)
+        return self._langgraph_workflow
 
     def upload_document(self, file_content: bytes, filename: str, product_group: Optional[ProductGroup] = None) -> Document:
         """Upload and process a document with optional product group"""
@@ -80,8 +80,8 @@ class DocumentUsecase:
         return self.repository.search_by_product_group(product_group, top_k)
 
     async def query_product_knowledge(self, query: ProductKnowledgeQuery) -> ProductKnowledgeResponse:
-        """Query product knowledge using the agentic workflow"""
-        return await self.workflow_orchestrator.execute_workflow(query)
+        """Query product knowledge using the LangGraph workflow"""
+        return await self.langgraph_workflow.execute_workflow(query)
 
     def list_documents(self) -> List[Document]:
         """List all documents"""
