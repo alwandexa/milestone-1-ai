@@ -582,7 +582,7 @@ def main():
     
     
     # Text input field (takes most space)
-    prompt = st.text_input("Ask about product knowledge...", key="user_input", label_visibility="collapsed")
+    prompt = st.text_input("Ask about product knowledge...", key="user_input", label_visibility="collapsed", placeholder="Ask about product knowledge...")
     
     # Action buttons container
     st.markdown('<div class="input-actions">', unsafe_allow_html=True)
