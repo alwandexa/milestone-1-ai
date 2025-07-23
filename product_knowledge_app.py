@@ -346,7 +346,7 @@ st.markdown("""
         color: white;
         padding: 1rem 1.5rem;
         border-radius: 12px 12px 0 0;
-        margin-bottom: 0;
+        margin-bottom: 1.5rem;
         font-weight: 600;
         font-size: 1.2rem;
     }
@@ -582,7 +582,7 @@ def main():
     
     
     # Text input field (takes most space)
-    prompt = st.text_input("Ask about product knowledge...", key="user_input", label_visibility="collapsed", placeholder="Ask about product knowledge...")
+    prompt = st.text_input("Ask about product knowledge...", key=f"user_input_{st.session_state.get('text_key', 0)}", label_visibility="collapsed", placeholder="Ask about product knowledge...")
     
     # Action buttons container
     st.markdown('<div class="input-actions">', unsafe_allow_html=True)
@@ -591,7 +591,7 @@ def main():
     uploaded_image = st.file_uploader(
         "📎",
         type=['png', 'jpg', 'jpeg'],
-        key="chat_image_uploader",
+        key=f"chat_image_uploader_{st.session_state.get('upload_key', 0)}",
         label_visibility="collapsed",
         help="Attach an image to your message"
     )
@@ -651,9 +651,9 @@ def main():
                     "metadata": metadata
                 })
                 
-                # Clear the input field
-                if "user_input" in st.session_state:
-                    del st.session_state.user_input
+                # Clear both input fields by changing their keys
+                st.session_state.text_key = st.session_state.get('text_key', 0) + 1
+                st.session_state.upload_key = st.session_state.get('upload_key', 0) + 1
                 
             except Exception as e:
                 error_msg = f"❌ Error: {str(e)}"
