@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 import uuid
 from datetime import datetime
 import io
@@ -483,9 +483,11 @@ def process_streaming_response(response, message_index: int):
     """Process streaming response and update the UI in real-time"""
     full_content = ""
     metadata = {}
+    chain_of_thought = []
     
     # Create a placeholder for real-time updates in the streaming area
     streaming_placeholder = st.empty()
+    cot_placeholder = st.empty()
     
     try:
         for line in response.iter_lines():
@@ -496,12 +498,18 @@ def process_streaming_response(response, message_index: int):
                         data = json.loads(line_str[6:])  # Remove 'data: ' prefix
                         
                         if data.get('type') == 'metadata':
-                            # Store metadata
+                            # Store metadata and chain of thought
                             metadata = {
                                 "sources": data.get("sources", []),
                                 "multimodal_content": data.get("multimodal_content", False),
                                 "extracted_text": data.get("extracted_text")
                             }
+                            chain_of_thought = data.get("chain_of_thought", [])
+                            
+                            # Display chain of thought in expander
+                            with cot_placeholder.container():
+                                display_chain_of_thought(chain_of_thought)
+                            
                         elif data.get('type') == 'content':
                             # Append content
                             full_content += data.get('content', '')
@@ -510,6 +518,7 @@ def process_streaming_response(response, message_index: int):
                             st.session_state.messages[message_index]["content"] = full_content
                             st.session_state.messages[message_index]["metadata"] = metadata
                             st.session_state.messages[message_index]["is_streaming"] = True
+                            st.session_state.messages[message_index]["chain_of_thought"] = chain_of_thought
                             
                             # Update the streaming area with current content
                             with streaming_placeholder.container():
@@ -535,7 +544,7 @@ def process_streaming_response(response, message_index: int):
         st.error(f"Streaming error: {str(e)}")
         full_content = f"Error during streaming: {str(e)}"
     
-    return full_content, metadata
+    return full_content, metadata, chain_of_thought
 
 def list_documents() -> List[Dict]:
     """List all documents"""
@@ -581,6 +590,52 @@ def get_confidence_class(score: float) -> str:
         return "confidence-medium"
     else:
         return "confidence-low"
+
+def display_chain_of_thought(chain_of_thought: List[Dict[str, Any]]):
+    """Display chain of thought steps in the UI using Streamlit expander"""
+    if not chain_of_thought:
+        return
+    
+    with st.expander("🧠 Chain of Thought", expanded=False):
+        for i, step in enumerate(chain_of_thought):
+            agent = step.get("agent", "Unknown Agent")
+            thought = step.get("thought", "")
+            status = step.get("status", "unknown")
+            details = step.get("details", {})
+            
+            # Create status badge with color coding
+            status_colors = {
+                "started": "🔵",
+                "completed": "🟢", 
+                "error": "🔴",
+                "warning": "🟡",
+                "unknown": "⚪"
+            }
+            status_icon = status_colors.get(status, "⚪")
+            
+            # Display the step
+            st.markdown(f"**{status_icon} {agent}**")
+            st.write(f"*{thought}*")
+            
+            # Show details if available
+            if details:
+                details_text = []
+                for key, value in details.items():
+                    if isinstance(value, (int, float)):
+                        details_text.append(f"**{key}**: {value}")
+                    elif isinstance(value, str):
+                        details_text.append(f"**{key}**: {value[:100]}{'...' if len(value) > 100 else ''}")
+                    else:
+                        details_text.append(f"**{key}**: {str(value)[:100]}{'...' if len(str(value)) > 100 else ''}")
+                
+                if details_text:
+                    st.markdown("**Details:**")
+                    for detail in details_text:
+                        st.markdown(f"• {detail}")
+            
+            # Add separator between steps
+            if i < len(chain_of_thought) - 1:
+                st.divider()
 
 # Main app
 def main():
@@ -724,6 +779,10 @@ def main():
                 if metadata.get("multimodal_content"):
                     st.markdown('<span class="multimodal-badge">🖼️ Multimodal</span>', unsafe_allow_html=True)
                 
+                # Chain of Thought
+                if "chain_of_thought" in message and message["chain_of_thought"]:
+                    display_chain_of_thought(message["chain_of_thought"])
+                
                 # Sources
                 if "sources" in metadata and metadata["sources"]:
                     with st.expander("📚 Sources"):
@@ -832,7 +891,7 @@ def main():
                 )
                 
                 # Process streaming response
-                full_content, metadata = process_streaming_response(response, assistant_message_index)
+                full_content, metadata, chain_of_thought = process_streaming_response(response, assistant_message_index)
                 
                 # Mark streaming as complete
                 st.session_state.messages[assistant_message_index]["is_streaming"] = False
@@ -854,6 +913,7 @@ def main():
                     "multimodal_content": response.get("multimodal_content", False),
                     "extracted_text": response.get("extracted_text")
                 }
+                st.session_state.messages[assistant_message_index]["chain_of_thought"] = response.get("chain_of_thought", [])
                 st.session_state.messages[assistant_message_index]["is_streaming"] = False
             
             # Clear both input fields by changing their keys
