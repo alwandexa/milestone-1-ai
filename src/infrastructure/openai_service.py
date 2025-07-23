@@ -42,7 +42,7 @@ class OpenAIService:
                 model="gpt-4o-mini",
                 messages=messages,  # type: ignore
                 max_tokens=max_tokens,
-                temperature=0.7
+                temperature=0.2
             )
             content = response.choices[0].message.content
             return content if content else "No response generated"
@@ -75,7 +75,7 @@ class OpenAIService:
                     }
                 ],
                 max_tokens=1000,
-                temperature=0.7
+                temperature=0.2
             )
             
             content = response.choices[0].message.content
@@ -127,7 +127,7 @@ class OpenAIService:
                 model="gpt-4o-mini",
                 messages=messages,
                 max_tokens=1000,
-                temperature=0.7
+                temperature=0.2
             )
             
             content = response.choices[0].message.content

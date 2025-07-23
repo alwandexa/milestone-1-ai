@@ -60,7 +60,7 @@ class LangGraphChat:
         # Initialize LLM with tracing
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.7,
+            temperature=0.2,
             api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
             callbacks=[self.tracer] if self.tracer else None,
         )
@@ -68,7 +68,7 @@ class LangGraphChat:
         # Initialize streaming LLM
         self.streaming_llm = ChatOpenAI(
             model="gpt-4o-mini",
-            temperature=0.7,
+            temperature=0.2,
             api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
             callbacks=[self.tracer] if self.tracer else None,
             streaming=True,
