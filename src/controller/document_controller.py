@@ -4,9 +4,9 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, AsyncGenerator
 from src.usecase.document_usecase import DocumentUsecase
 from src.infrastructure.langgraph_chat import LangGraphChat
-from src.infrastructure.persona_langgraph_chat import PersonaLangGraphChat
+
 from src.domain.document import Document, ProductGroup, DocumentQuery, DocumentResponse
-from src.domain.persona import PersonaType
+
 from src.controller.dashboard_controller import router as dashboard_router
 import uuid
 import json
@@ -40,35 +40,9 @@ class MultimodalChatResponse(BaseModel):
     persona_metadata: Optional[Dict[str, Any]] = None
     persona_response_format: Optional[Dict[str, Any]] = None
 
-class PersonaChatResponse(BaseModel):
-    answer: str
-    sources: List[str]
-    search_count: int
-    context: str
-    multimodal_content: bool
-    extracted_text: Optional[str] = None
-    chain_of_thought: List[Dict[str, Any]] = []
-    input_validation: Optional[Dict[str, Any]] = None
-    response_validation: Optional[Dict[str, Any]] = None
-    persona_metadata: Optional[Dict[str, Any]] = None
-    persona_response_format: Optional[Dict[str, Any]] = None
 
-class PersonaInfo(BaseModel):
-    name: str
-    description: str
-    persona_type: str
-    style: str
-    temperature: float
-    response_format: str
-    include_sources: bool
-    include_confidence: bool
-    include_suggestions: bool
-    strict_validation: bool
-    clinical_safety_check: bool
-    created_at: str
-    updated_at: str
-    is_active: bool
-    tags: List[str]
+
+
 
 class DocumentResponse(BaseModel):
     id: str
@@ -84,14 +58,13 @@ class ProductGroupResponse(BaseModel):
 # Dependency injection
 _document_usecase: Optional[DocumentUsecase] = None
 _langgraph_chat: Optional[LangGraphChat] = None
-_persona_langgraph_chat: Optional[PersonaLangGraphChat] = None
 
-def set_dependencies(document_usecase: DocumentUsecase, langgraph_chat: LangGraphChat, persona_langgraph_chat: Optional[PersonaLangGraphChat] = None):
+
+def set_dependencies(document_usecase: DocumentUsecase, langgraph_chat: LangGraphChat):
     """Set the dependencies for the controller"""
-    global _document_usecase, _langgraph_chat, _persona_langgraph_chat
+    global _document_usecase, _langgraph_chat
     _document_usecase = document_usecase
     _langgraph_chat = langgraph_chat
-    _persona_langgraph_chat = persona_langgraph_chat
 
 def get_document_usecase() -> DocumentUsecase:
     if _document_usecase is None:
@@ -103,10 +76,7 @@ def get_langgraph_chat() -> LangGraphChat:
         raise HTTPException(status_code=500, detail="LangGraph chat not initialized")
     return _langgraph_chat
 
-def get_persona_langgraph_chat() -> PersonaLangGraphChat:
-    if _persona_langgraph_chat is None:
-        raise HTTPException(status_code=500, detail="Persona LangGraph chat not initialized")
-    return _persona_langgraph_chat
+
 
 @app.post("/documents/upload")
 async def upload_document(
@@ -655,149 +625,4 @@ async def delete_document(document_id: str):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "service": "Product Knowledge API"}
-
-# Persona Management Endpoints
-
-@app.get("/personas", response_model=List[PersonaInfo])
-async def get_all_personas():
-    """Get all available personas"""
-    try:
-        persona_chat = get_persona_langgraph_chat()
-        personas = persona_chat.get_available_personas()
-        return personas
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get personas: {str(e)}")
-
-@app.get("/personas/{persona_type}", response_model=List[PersonaInfo])
-async def get_personas_by_type(persona_type: str):
-    """Get personas by type (response_style, role_based, interaction)"""
-    try:
-        persona_chat = get_persona_langgraph_chat()
-        
-        # Convert string to enum
-        try:
-            persona_type_enum = PersonaType(persona_type)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid persona type: {persona_type}")
-        
-        personas = persona_chat.get_personas_by_type(persona_type_enum)
-        return personas
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get personas by type: {str(e)}")
-
-@app.get("/personas/info/{persona_name}", response_model=PersonaInfo)
-async def get_persona_info(persona_name: str):
-    """Get specific persona information"""
-    try:
-        persona_chat = get_persona_langgraph_chat()
-        personas = persona_chat.get_available_personas()
-        
-        for persona in personas:
-            if persona["name"].lower() == persona_name.lower():
-                return persona
-        
-        raise HTTPException(status_code=404, detail=f"Persona not found: {persona_name}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get persona info: {str(e)}")
-
-@app.post("/chat/persona", response_model=PersonaChatResponse)
-async def chat_with_persona(
-    query: str = Form(...),
-    persona_name: str = Form(...),
-    session_id: Optional[str] = Form(None),
-    image: Optional[UploadFile] = File(None)
-):
-    """Chat with documents using a specific persona"""
-    import time
-    start_time = time.time()
-    
-    try:
-        # Read image data if provided
-        image_data = None
-        if image:
-            image_data = await image.read()
-        
-        # Get persona chat service
-        persona_chat = get_persona_langgraph_chat()
-        
-        # Validate persona exists
-        available_personas = persona_chat.get_available_personas()
-        persona_exists = any(p["name"].lower() == persona_name.lower() for p in available_personas)
-        if not persona_exists:
-            raise HTTPException(status_code=400, detail=f"Invalid persona: {persona_name}")
-        
-        # Perform chat with persona
-        result = persona_chat.chat(query, session_id, image_data, persona_name)
-        
-        # Calculate processing time
-        processing_time_ms = int((time.time() - start_time) * 1000)
-        
-        # Log the chat event for monitoring
-        try:
-            from src.controller.dashboard_controller import get_monitoring_service
-            monitoring_service = get_monitoring_service()
-            if monitoring_service:
-                monitoring_service.log_chat_event(
-                    query=query,
-                    response_length=len(result.get("answer", "")),
-                    processing_time_ms=processing_time_ms,
-                    session_id=session_id,
-                    persona_name=persona_name,
-                    search_count=result.get("search_count", 0),
-                    has_error=bool(result.get("error"))
-                )
-        except Exception as e:
-            print(f"⚠️ Warning: Failed to log chat event: {e}")
-        
-        return PersonaChatResponse(**result)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Chat failed: {str(e)}")
-
-@app.post("/chat/persona/stream")
-async def chat_with_persona_stream(
-    query: str = Form(...),
-    persona_name: str = Form(...),
-    session_id: Optional[str] = Form(None),
-    image: Optional[UploadFile] = File(None)
-):
-    """Stream chat with documents using a specific persona"""
-    try:
-        # Read image data if provided
-        image_data = None
-        if image:
-            image_data = await image.read()
-        
-        # Get persona chat service
-        persona_chat = get_persona_langgraph_chat()
-        
-        # Validate persona exists
-        available_personas = persona_chat.get_available_personas()
-        persona_exists = any(p["name"].lower() == persona_name.lower() for p in available_personas)
-        if not persona_exists:
-            raise HTTPException(status_code=400, detail=f"Invalid persona: {persona_name}")
-        
-        async def generate_stream() -> AsyncGenerator[str, None]:
-            try:
-                async for chunk in persona_chat.chat_stream(query, session_id, image_data, persona_name):
-                    yield f"data: {json.dumps(chunk)}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
-        
-        return StreamingResponse(
-            generate_stream(),
-            media_type="text/plain",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream"
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Stream chat failed: {str(e)}") 
+    return {"status": "healthy", "service": "Product Knowledge API"} 

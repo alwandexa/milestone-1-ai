@@ -606,27 +606,7 @@ def chat_with_documents_stream(query: str, image_data: Optional[bytes] = None, s
 
 
 
-def get_available_personas() -> List[Dict]:
-    """Get all available personas from the API"""
-    try:
-        url = get_api_url("/personas")
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"Failed to get personas: {str(e)}")
-        return []
 
-def get_personas_by_type(persona_type: str) -> List[Dict]:
-    """Get personas by type from the API"""
-    try:
-        url = get_api_url(f"/personas/{persona_type}")
-        response = requests.get(url)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        print(f"Failed to get personas by type: {str(e)}")
-        return []
 
 def process_streaming_response(response, message_index: int):
     """Process streaming response and update the UI in real-time"""
@@ -1264,13 +1244,15 @@ def main():
     with st.sidebar:
         st.markdown("### 🎭 Persona Selection")
         
-        # Get available personas
+        # Get available personas from persona manager
         try:
-            personas = get_available_personas()
+            from src.domain.persona import PersonaManager
+            persona_manager = PersonaManager()
+            all_personas = persona_manager.get_all_personas()
             
-            if personas:
+            if all_personas:
                 # Create a simple persona selector
-                persona_options = ["Default (No Persona)"] + [p["name"] for p in personas]
+                persona_options = ["Default (No Persona)"] + [p.name for p in all_personas]
                 selected_persona_display = st.selectbox(
                     "Choose a persona:",
                     options=persona_options,
@@ -1286,29 +1268,29 @@ def main():
                 
                 # Show current persona info
                 if st.session_state.selected_persona:
-                    current_persona = next((p for p in personas if p['name'].lower() == st.session_state.selected_persona), None)
+                    current_persona = persona_manager.get_persona(st.session_state.selected_persona)
                     if current_persona:
-                        st.markdown(f"**Current:** {current_persona['name']}")
-                        st.markdown(f"*{current_persona['description']}*")
+                        st.markdown(f"**Current:** {current_persona.name}")
+                        st.markdown(f"*{current_persona.description}*")
                         
                         # Show persona characteristics
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.metric("Temperature", f"{current_persona['temperature']}")
+                            st.metric("Temperature", f"{current_persona.temperature}")
                         with col2:
-                            st.metric("Type", current_persona['persona_type'].replace('_', ' ').title())
+                            st.metric("Type", current_persona.persona_type.value.replace('_', ' ').title())
                         
                         # Show features
                         features = []
-                        if current_persona['include_sources']:
+                        if current_persona.include_sources:
                             features.append("📚 Sources")
-                        if current_persona['include_confidence']:
+                        if current_persona.include_confidence:
                             features.append("🎯 Confidence")
-                        if current_persona['include_suggestions']:
+                        if current_persona.include_suggestions:
                             features.append("💡 Suggestions")
-                        if current_persona['strict_validation']:
+                        if current_persona.strict_validation:
                             features.append("🛡️ Strict")
-                        if current_persona['clinical_safety_check']:
+                        if current_persona.clinical_safety_check:
                             features.append("🏥 Clinical")
                         
                         if features:
