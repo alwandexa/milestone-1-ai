@@ -29,6 +29,8 @@ class MultimodalChatResponse(BaseModel):
     multimodal_content: bool
     extracted_text: Optional[str] = None
     chain_of_thought: List[Dict[str, Any]] = []
+    input_validation: Optional[Dict[str, Any]] = None
+    response_validation: Optional[Dict[str, Any]] = None
 
 class DocumentResponse(BaseModel):
     id: str

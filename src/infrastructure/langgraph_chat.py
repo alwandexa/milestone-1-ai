@@ -4,8 +4,10 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.runnables import RunnableLambda
 from src.domain.document import DocumentChunk
 from src.infrastructure.openai_service import OpenAIService
+from src.infrastructure.guardrails_service import GuardrailsService
 from src.usecase.document_usecase import DocumentUsecase
 from src.infrastructure.langsmith_setup import setup_langsmith, get_tracer
 import os
@@ -27,6 +29,8 @@ class ChatState(TypedDict):
     multimodal_content: bool
     extracted_text: Optional[str]
     chain_of_thought: List[Dict[str, Any]]  # Track agent reasoning steps
+    input_validation: Optional[Dict[str, Any]]  # Guardrails input validation
+    response_validation: Optional[Dict[str, Any]]  # Guardrails response validation
 
 
 class LangGraphChat:
@@ -34,13 +38,24 @@ class LangGraphChat:
         self,
         openai_service: OpenAIService,
         document_usecase: Optional[DocumentUsecase] = None,
+        enable_guardrails: bool = True,
     ):
         self.openai_service = openai_service
         self.document_usecase = document_usecase
+        self.enable_guardrails = enable_guardrails
 
         # Setup LangSmith
         self.langsmith_client = setup_langsmith()
         self.tracer = get_tracer()
+
+        # Initialize Guardrails service only if enabled
+        self.guardrails_service = None
+        if self.enable_guardrails:
+            try:
+                self.guardrails_service = GuardrailsService()
+            except Exception as e:
+                print(f"⚠️ Warning: Guardrails service initialization failed: {e}")
+                self.enable_guardrails = False
 
         # Initialize LLM with tracing
         self.llm = ChatOpenAI(
@@ -63,34 +78,240 @@ class LangGraphChat:
         self.graph = self._create_graph()
 
     def _create_graph(self) -> StateGraph:
-        """Create the LangGraph workflow with multimodal support"""
+        """Create the LangGraph workflow with multimodal support and guardrails"""
 
         # Define the state schema
         workflow = StateGraph(ChatState)
 
-        # Add nodes
-        workflow.add_node("process_multimodal_input", self._process_multimodal_input)
-        workflow.add_node("search_documents", self._search_documents)
-        workflow.add_node("evaluate_results", self._evaluate_results)
-        workflow.add_node("generate_answer", self._generate_answer)
-        workflow.add_node("modify_query", self._modify_query)
+        # Add nodes with proper tracing
+        workflow.add_node("validate_input", RunnableLambda(self._validate_input, name="validate_input"))
+        workflow.add_node("process_multimodal_input", RunnableLambda(self._process_multimodal_input, name="process_multimodal_input"))
+        workflow.add_node("search_documents", RunnableLambda(self._search_documents, name="search_documents"))
+        workflow.add_node("evaluate_results", RunnableLambda(self._evaluate_results, name="evaluate_results"))
+        workflow.add_node("generate_answer", RunnableLambda(self._generate_answer, name="generate_answer"))
+        workflow.add_node("validate_response", RunnableLambda(self._validate_response, name="validate_response"))
+        workflow.add_node("modify_query", RunnableLambda(self._modify_query, name="modify_query"))
 
         # Define edges
+        workflow.add_edge("validate_input", "process_multimodal_input")
         workflow.add_edge("process_multimodal_input", "search_documents")
         workflow.add_edge("search_documents", "evaluate_results")
         workflow.add_conditional_edges(
             "evaluate_results",
-            self._should_generate_answer,
+            RunnableLambda(self._should_generate_answer, name="should_generate_answer"),
             {"generate_answer": "generate_answer", "modify_query": "modify_query"},
         )
         workflow.add_edge("modify_query", "search_documents")
-        workflow.add_edge("generate_answer", END)
+        workflow.add_edge("generate_answer", "validate_response")
+        workflow.add_edge("validate_response", END)
 
         # Set entry point
-        workflow.set_entry_point("process_multimodal_input")
+        workflow.set_entry_point("validate_input")
 
         # Return the compiled workflow, but type as Any to avoid mypy type error
         return workflow.compile(checkpointer=self.memory)  # type: ignore
+
+    def _validate_input(self, state: ChatState) -> ChatState:
+        """Validate user input using Guardrails AI"""
+        query = state["query"]
+        image_data = state.get("image_data")
+        
+        # Initialize chain of thought
+        if "chain_of_thought" not in state:
+            state["chain_of_thought"] = []
+        
+        # Add reasoning step with LangSmith tracing
+        validation_step = {
+            "step": "input_validation",
+            "agent": "Guardrails Validator",
+            "thought": f"Validating user input: '{query[:100]}...'",
+            "status": "started",
+            "metadata": {
+                "node_name": "validate_input",
+                "tracing_enabled": True
+            }
+        }
+        state["chain_of_thought"].append(validation_step)
+        
+        try:
+            if not self.enable_guardrails or not self.guardrails_service:
+                # Skip validation if Guardrails is disabled
+                state["input_validation"] = {
+                    "validation_type": "input_validation",
+                    "is_valid": True,
+                    "confidence_score": 1.0,
+                    "violation_count": 0,
+                    "violations": [],
+                    "has_correction": False,
+                    "disabled": True
+                }
+                state["chain_of_thought"].append({
+                    "step": "input_validation",
+                    "agent": "Guardrails Validator",
+                    "thought": "Input validation skipped (Guardrails disabled)",
+                    "status": "skipped",
+                    "metadata": {
+                        "node_name": "validate_input",
+                        "tracing_enabled": True,
+                        "guardrails_disabled": True
+                    }
+                })
+                return state
+            
+            if image_data:
+                # Validate multimodal input
+                validation_result = self.guardrails_service.validate_multimodal_input(
+                    text=query,
+                    image_description="Image uploaded by user"
+                )
+            else:
+                # Validate text-only input
+                validation_result = self.guardrails_service.validate_user_input(query)
+            
+            # Store validation result
+            state["input_validation"] = self.guardrails_service.get_validation_summary(validation_result)
+            
+            # Update chain of thought
+            state["chain_of_thought"].append({
+                "step": "input_validation",
+                "agent": "Guardrails Validator",
+                "thought": f"Input validation {'passed' if validation_result.is_valid else 'failed'}",
+                "status": "completed",
+                "details": {
+                    "is_valid": validation_result.is_valid,
+                    "violation_count": len(validation_result.violations),
+                    "confidence_score": validation_result.confidence_score
+                }
+            })
+            
+            # If input is invalid, modify the query to be safe
+            if not validation_result.is_valid and validation_result.corrected_input:
+                state["query"] = validation_result.corrected_input
+                state["chain_of_thought"].append({
+                    "step": "input_correction",
+                    "agent": "Guardrails Validator",
+                    "thought": "Applied input correction for safety",
+                    "status": "completed"
+                })
+            
+        except Exception as e:
+            # If validation fails, continue with original input but log the error
+            state["input_validation"] = {
+                "validation_type": "input_validation",
+                "is_valid": True,  # Default to valid to avoid blocking
+                "confidence_score": 0.0,
+                "violation_count": 0,
+                "violations": [{"error": f"Validation service error: {str(e)}"}],
+                "has_correction": False
+            }
+            
+            state["chain_of_thought"].append({
+                "step": "input_validation",
+                "agent": "Guardrails Validator",
+                "thought": f"Validation service error: {str(e)}",
+                "status": "error"
+            })
+        
+        return state
+
+    def _validate_response(self, state: ChatState) -> ChatState:
+        """Validate agent response using Guardrails AI"""
+        answer = state.get("answer", "")
+        original_query = state["original_query"]
+        
+        # Add reasoning step with LangSmith tracing
+        validation_step = {
+            "step": "response_validation",
+            "agent": "Guardrails Validator",
+            "thought": f"Validating agent response for safety and quality",
+            "status": "started",
+            "metadata": {
+                "node_name": "validate_response",
+                "tracing_enabled": True
+            }
+        }
+        state["chain_of_thought"].append(validation_step)
+        
+        try:
+            if not self.enable_guardrails or not self.guardrails_service:
+                # Skip validation if Guardrails is disabled
+                state["response_validation"] = {
+                    "validation_type": "response_validation",
+                    "is_valid": True,
+                    "confidence_score": 1.0,
+                    "violation_count": 0,
+                    "violations": [],
+                    "has_correction": False,
+                    "disabled": True
+                }
+                state["chain_of_thought"].append({
+                    "step": "response_validation",
+                    "agent": "Guardrails Validator",
+                    "thought": "Response validation skipped (Guardrails disabled)",
+                    "status": "skipped",
+                    "metadata": {
+                        "node_name": "validate_response",
+                        "tracing_enabled": True,
+                        "guardrails_disabled": True
+                    }
+                })
+                return state
+            
+            validation_result = self.guardrails_service.validate_agent_response(
+                response=answer,
+                original_query=original_query
+            )
+            
+            # Store validation result
+            state["response_validation"] = self.guardrails_service.get_validation_summary(validation_result)
+            
+            # Update chain of thought
+            state["chain_of_thought"].append({
+                "step": "response_validation",
+                "agent": "Guardrails Validator",
+                "thought": f"Response validation {'passed' if validation_result.is_valid else 'failed'}",
+                "status": "completed",
+                "details": {
+                    "is_valid": validation_result.is_valid,
+                    "violation_count": len(validation_result.violations),
+                    "confidence_score": validation_result.confidence_score
+                }
+            })
+            
+            # If response is invalid, provide a safe fallback
+            if not validation_result.is_valid:
+                safe_response = (
+                    "I apologize, but I cannot provide that information as it may violate safety guidelines. "
+                    "Please try rephrasing your question or ask about a different topic."
+                )
+                state["answer"] = safe_response
+                
+                state["chain_of_thought"].append({
+                    "step": "response_correction",
+                    "agent": "Guardrails Validator",
+                    "thought": "Applied response correction for safety",
+                    "status": "completed"
+                })
+            
+        except Exception as e:
+            # If validation fails, keep original response but log the error
+            state["response_validation"] = {
+                "validation_type": "response_validation",
+                "is_valid": True,  # Default to valid to avoid blocking
+                "confidence_score": 0.0,
+                "violation_count": 0,
+                "violations": [{"error": f"Validation service error: {str(e)}"}],
+                "has_correction": False
+            }
+            
+            state["chain_of_thought"].append({
+                "step": "response_validation",
+                "agent": "Guardrails Validator",
+                "thought": f"Validation service error: {str(e)}",
+                "status": "error"
+            })
+        
+        return state
 
     def _process_multimodal_input(self, state: ChatState) -> ChatState:
         """Process multimodal input (text + image)"""
@@ -101,13 +322,18 @@ class LangGraphChat:
         if "chain_of_thought" not in state:
             state["chain_of_thought"] = []
         
-        # Add reasoning step
-        state["chain_of_thought"].append({
+        # Add reasoning step with LangSmith tracing
+        processing_step = {
             "step": "multimodal_processing",
             "agent": "Input Processor",
             "thought": f"Processing user query: '{query}'",
-            "status": "started"
-        })
+            "status": "started",
+            "metadata": {
+                "node_name": "process_multimodal_input",
+                "tracing_enabled": True
+            }
+        }
+        state["chain_of_thought"].append(processing_step)
         
         if image_data:
             # Extract text from image if present
@@ -157,13 +383,18 @@ class LangGraphChat:
         """Search for relevant document chunks"""
         query = state["query"]
 
-        # Add reasoning step
-        state["chain_of_thought"].append({
+        # Add reasoning step with LangSmith tracing
+        search_step = {
             "step": "document_search",
             "agent": "Document Retriever",
             "thought": f"Searching for documents relevant to: '{query[:100]}...'",
-            "status": "started"
-        })
+            "status": "started",
+            "metadata": {
+                "node_name": "search_documents",
+                "tracing_enabled": True
+            }
+        }
+        state["chain_of_thought"].append(search_step)
 
         # Get search results from document usecase
         if self.document_usecase:
@@ -201,13 +432,18 @@ class LangGraphChat:
         query = state["query"]
         search_results = state["search_results"]
 
-        # Add reasoning step
-        state["chain_of_thought"].append({
+        # Add reasoning step with LangSmith tracing
+        evaluation_step = {
             "step": "evaluate_results",
             "agent": "Result Evaluator",
             "thought": f"Evaluating {len(search_results)} search results for relevance",
-            "status": "started"
-        })
+            "status": "started",
+            "metadata": {
+                "node_name": "evaluate_results",
+                "tracing_enabled": True
+            }
+        }
+        state["chain_of_thought"].append(evaluation_step)
 
         if not search_results:
             state["has_answer"] = False
@@ -308,18 +544,23 @@ class LangGraphChat:
         image_data = state.get("image_data")
         multimodal_content = state.get("multimodal_content", False)
 
-        # Add reasoning step
-        state["chain_of_thought"].append({
+        # Add reasoning step with LangSmith tracing
+        generation_step = {
             "step": "generate_answer",
             "agent": "Answer Generator",
             "thought": f"Generating answer for: '{query[:100]}...'",
             "status": "started",
+            "metadata": {
+                "node_name": "generate_answer",
+                "tracing_enabled": True
+            },
             "details": {
                 "multimodal": multimodal_content,
                 "has_context": bool(context),
                 "search_results_count": len(search_results)
             }
-        })
+        }
+        state["chain_of_thought"].append(generation_step)
 
         if not context and not multimodal_content:
             state["answer"] = (
@@ -457,10 +698,13 @@ class LangGraphChat:
             "context": result.get("context", ""),
             "multimodal_content": result.get("multimodal_content", False),
             "extracted_text": result.get("extracted_text"),
+            "input_validation": result.get("input_validation"),
+            "response_validation": result.get("response_validation"),
+            "chain_of_thought": result.get("chain_of_thought", [])
         }
 
     async def chat_stream(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None) -> AsyncGenerator[Dict[str, Any], None]:
-        """Streaming chat with the document-based system with multimodal support"""
+        """Streaming chat with the document-based system with multimodal support using LangGraph workflow"""
         # Always provide a thread_id for the checkpointer
         if not session_id:
             session_id = "default_session"
@@ -483,18 +727,31 @@ class LangGraphChat:
             chain_of_thought=[],
         )
         
-        # Process multimodal input first
-        state = self._process_multimodal_input(state)
-        
-        # Search documents
-        state = self._search_documents(state)
-        
-        # Evaluate results
-        state = self._evaluate_results(state)
-        
-        # Generate streaming answer
-        async for chunk in self._generate_streaming_answer(state):
-            yield chunk
+        # Execute the LangGraph workflow for proper tracing
+        try:
+            # Use the LangGraph workflow for proper tracing
+            final_state = self.graph.invoke(state, config)
+            
+            # Generate streaming answer based on the workflow results
+            async for chunk in self._generate_streaming_answer(final_state):
+                yield chunk
+                
+        except Exception as e:
+            # Fallback to direct method calls if LangGraph fails
+            print(f"LangGraph workflow failed, falling back to direct methods: {str(e)}")
+            
+            # Process multimodal input first
+            state = self._process_multimodal_input(state)
+            
+            # Search documents
+            state = self._search_documents(state)
+            
+            # Evaluate results
+            state = self._evaluate_results(state)
+            
+            # Generate streaming answer
+            async for chunk in self._generate_streaming_answer(state):
+                yield chunk
 
     async def _generate_streaming_answer(self, state: ChatState) -> AsyncGenerator[Dict[str, Any], None]:
         """Generate streaming answer based on context and multimodal content"""
