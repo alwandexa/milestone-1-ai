@@ -172,21 +172,22 @@ class LangGraphChat:
             state["input_validation"] = self.guardrails_service.get_validation_summary(validation_result)
             
             # Update chain of thought
+            validation_summary = self.guardrails_service.get_validation_summary(validation_result)
             state["chain_of_thought"].append({
                 "step": "input_validation",
                 "agent": "Guardrails Validator",
-                "thought": f"Input validation {'passed' if validation_result.is_valid else 'failed'}",
+                "thought": f"Input validation {'passed' if validation_summary['is_valid'] else 'failed'}",
                 "status": "completed",
                 "details": {
-                    "is_valid": validation_result.is_valid,
-                    "violation_count": len(validation_result.violations),
-                    "confidence_score": validation_result.confidence_score
+                    "is_valid": validation_summary['is_valid'],
+                    "violation_count": validation_summary['violation_count'],
+                    "confidence_score": validation_summary['confidence_score']
                 }
             })
             
             # If input is invalid, modify the query to be safe
-            if not validation_result.is_valid and validation_result.corrected_input:
-                state["query"] = validation_result.corrected_input
+            if not validation_summary['is_valid'] and validation_summary.get('corrected_input'):
+                state["query"] = validation_summary['corrected_input']
                 state["chain_of_thought"].append({
                     "step": "input_correction",
                     "agent": "Guardrails Validator",
@@ -266,20 +267,21 @@ class LangGraphChat:
             state["response_validation"] = self.guardrails_service.get_validation_summary(validation_result)
             
             # Update chain of thought
+            validation_summary = self.guardrails_service.get_validation_summary(validation_result)
             state["chain_of_thought"].append({
                 "step": "response_validation",
                 "agent": "Guardrails Validator",
-                "thought": f"Response validation {'passed' if validation_result.is_valid else 'failed'}",
+                "thought": f"Response validation {'passed' if validation_summary['is_valid'] else 'failed'}",
                 "status": "completed",
                 "details": {
-                    "is_valid": validation_result.is_valid,
-                    "violation_count": len(validation_result.violations),
-                    "confidence_score": validation_result.confidence_score
+                    "is_valid": validation_summary['is_valid'],
+                    "violation_count": validation_summary['violation_count'],
+                    "confidence_score": validation_summary['confidence_score']
                 }
             })
             
             # If response is invalid, provide a safe fallback
-            if not validation_result.is_valid:
+            if not validation_summary['is_valid']:
                 safe_response = (
                     "I apologize, but I cannot provide that information as it may violate safety guidelines. "
                     "Please try rephrasing your question or ask about a different topic."
