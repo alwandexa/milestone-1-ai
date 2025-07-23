@@ -6,6 +6,9 @@ import uuid
 from datetime import datetime
 import io
 from PIL import Image
+import asyncio
+import aiohttp
+import time
 
 # Custom CSS for modern blueish theme
 st.set_page_config(
@@ -373,6 +376,29 @@ st.markdown("""
         background: linear-gradient(135deg, #e5e7eb 0%, #d1d5db 100%);
         transform: translateY(-1px);
     }
+
+    /* Typing indicator */
+    .typing-indicator {
+        display: inline-block;
+        animation: blink 1s infinite;
+        color: #3b82f6;
+        font-weight: bold;
+    }
+
+    @keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
+    }
+
+    /* Streaming message styling */
+    .streaming-message {
+        opacity: 0.8;
+        transition: opacity 0.3s ease;
+    }
+
+    .streaming-message.complete {
+        opacity: 1;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -408,6 +434,74 @@ def chat_with_documents(query: str, image_data: Optional[bytes] = None, session_
     response = requests.post(get_api_url("/chat"), files=files, data=data)
     response.raise_for_status()
     return response.json()
+
+def chat_with_documents_stream(query: str, image_data: Optional[bytes] = None, session_id: Optional[str] = None):
+    """Streaming chat function that works like ChatGPT - supports both text and images"""
+    files = {}
+    data = {
+        "query": query,
+        "session_id": session_id
+    }
+    
+    if image_data:
+        files["image"] = ("image.jpg", image_data, "image/jpeg")
+    
+    # Use the streaming endpoint
+    response = requests.post(get_api_url("/chat/stream"), files=files, data=data, stream=True)
+    response.raise_for_status()
+    return response
+
+def process_streaming_response(response, message_index: int):
+    """Process streaming response and update the UI in real-time"""
+    full_content = ""
+    metadata = {}
+    
+    # Create a placeholder for real-time updates
+    placeholder = st.empty()
+    
+    try:
+        for line in response.iter_lines():
+            if line:
+                line_str = line.decode('utf-8')
+                if line_str.startswith('data: '):
+                    try:
+                        data = json.loads(line_str[6:])  # Remove 'data: ' prefix
+                        
+                        if data.get('type') == 'metadata':
+                            # Store metadata
+                            metadata = {
+                                "sources": data.get("sources", []),
+                                "multimodal_content": data.get("multimodal_content", False),
+                                "extracted_text": data.get("extracted_text")
+                            }
+                        elif data.get('type') == 'content':
+                            # Append content
+                            full_content += data.get('content', '')
+                            
+                            # Update the message in session state
+                            st.session_state.messages[message_index]["content"] = full_content
+                            st.session_state.messages[message_index]["metadata"] = metadata
+                            st.session_state.messages[message_index]["is_streaming"] = True
+                            
+                            # Update the placeholder with current content using native Streamlit
+                            with placeholder.container():
+                                st.markdown("**Assistant:**")
+                                st.write(full_content + "▋")
+                            
+                        elif data.get('type') == 'error':
+                            st.error(f"Error: {data.get('content', 'Unknown error')}")
+                            break
+                        elif data.get('type') == 'end':
+                            # Mark streaming as complete
+                            st.session_state.messages[message_index]["is_streaming"] = False
+                            break
+                    except json.JSONDecodeError:
+                        continue
+    except Exception as e:
+        st.error(f"Streaming error: {str(e)}")
+        full_content = f"Error during streaming: {str(e)}"
+    
+    return full_content, metadata
 
 def list_documents() -> List[Dict]:
     """List all documents"""
@@ -540,7 +634,7 @@ def main():
     
     
     # Display chat messages using custom styling
-    for message in st.session_state.messages:
+    for i, message in enumerate(st.session_state.messages):
         if message["role"] == "user":
             # Check if message has image
             has_image = "image_base64" in message
@@ -557,7 +651,6 @@ def main():
                             </div>
                         </div>
                     </div>
-                </div>
                 """, unsafe_allow_html=True)
             else:
                 # User message without image
@@ -568,21 +661,34 @@ def main():
                             {message["content"]}
                         </div>
                     </div>
-                </div>
                 """, unsafe_allow_html=True)
         else:
-            st.markdown(f"""
-            <div class="message-container">
-                <div class="assistant-message">
-                    <div class="message-bubble assistant-bubble">
-                        {message["content"]}
+            # Check if this is a streaming message
+            is_streaming = message.get("is_streaming", False)
+            content = message["content"]
+            
+            # Add typing indicator for streaming messages
+            if is_streaming and not content:
+                content = "🤔 Thinking..."
+            
+            # For streaming messages, use native Streamlit components to avoid HTML rendering issues
+            if is_streaming:
+                st.markdown("**Assistant:**")
+                st.write(content + "▋")
+            else:
+                # Display assistant message with HTML styling for completed messages
+                st.markdown(f"""
+                <div class="message-container">
+                    <div class="assistant-message">
+                        <div class="message-bubble assistant-bubble">
+                            {content}
+                        </div>
                     </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
             
-            # Show additional info for assistant messages
-            if "metadata" in message:
+            # Show additional info for assistant messages (only when not streaming)
+            if "metadata" in message and not is_streaming:
                 metadata = message["metadata"]
                 
                 # Multimodal badge
@@ -649,46 +755,69 @@ def main():
         
         st.session_state.messages.append(message_data)
         
-        # Get assistant response
-        with st.spinner("🤔 Thinking..."):
+        # Add assistant message placeholder for streaming
+        assistant_message_index = len(st.session_state.messages)
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": "",
+            "metadata": {},
+            "is_streaming": True
+        })
+        
+        # Get streaming assistant response
+        try:
+            # Prepare image data if present
+            image_data = None
+            if uploaded_image:
+                image_data = uploaded_image.read()
+                uploaded_image.seek(0)  # Reset file pointer
+            
+            # Try streaming first
             try:
-                # Prepare image data if present
-                image_data = None
-                if uploaded_image:
-                    image_data = uploaded_image.read()
-                    uploaded_image.seek(0)  # Reset file pointer
+                # Use streaming chat function
+                response = chat_with_documents_stream(
+                    query=current_query,
+                    image_data=image_data,
+                    session_id=get_current_conversation()
+                )
                 
-                # Use unified chat function
+                # Process streaming response
+                full_content, metadata = process_streaming_response(response, assistant_message_index)
+                
+                # Mark streaming as complete
+                st.session_state.messages[assistant_message_index]["is_streaming"] = False
+                
+            except Exception as streaming_error:
+                st.warning("Streaming failed, falling back to regular response...")
+                
+                # Fallback to non-streaming API
                 response = chat_with_documents(
                     query=current_query,
                     image_data=image_data,
                     session_id=get_current_conversation()
                 )
                 
-                # Add assistant message with metadata
-                metadata = {
+                # Update the message with the response
+                st.session_state.messages[assistant_message_index]["content"] = response["answer"]
+                st.session_state.messages[assistant_message_index]["metadata"] = {
                     "sources": response.get("sources", []),
                     "multimodal_content": response.get("multimodal_content", False),
                     "extracted_text": response.get("extracted_text")
                 }
+                st.session_state.messages[assistant_message_index]["is_streaming"] = False
+            
+            # Clear both input fields by changing their keys
+            st.session_state.text_key = st.session_state.get('text_key', 0) + 1
+            st.session_state.upload_key = st.session_state.get('upload_key', 0) + 1
                 
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": response["answer"],
-                    "metadata": metadata
-                })
-                
-                # Clear both input fields by changing their keys
-                st.session_state.text_key = st.session_state.get('text_key', 0) + 1
-                st.session_state.upload_key = st.session_state.get('upload_key', 0) + 1
-                
-            except Exception as e:
-                error_msg = f"❌ Error: {str(e)}"
-                st.error(error_msg)
-                st.session_state.messages.append({
-                    "role": "assistant",
-                    "content": error_msg
-                })
+        except Exception as e:
+            error_msg = f"❌ Error: {str(e)}"
+            st.error(error_msg)
+            st.session_state.messages[assistant_message_index] = {
+                "role": "assistant",
+                "content": error_msg,
+                "is_streaming": False
+            }
         
         # Rerun to update the display
         st.rerun()
