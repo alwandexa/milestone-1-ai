@@ -6,6 +6,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.runnables import RunnableLambda
 from src.domain.document import DocumentChunk
+from src.domain.persona import PersonaManager
 from src.infrastructure.openai_service import OpenAIService
 from src.infrastructure.guardrails_service import GuardrailsService
 from src.usecase.document_usecase import DocumentUsecase
@@ -31,6 +32,8 @@ class ChatState(TypedDict):
     chain_of_thought: List[Dict[str, Any]]  # Track agent reasoning steps
     input_validation: Optional[Dict[str, Any]]  # Guardrails input validation
     response_validation: Optional[Dict[str, Any]]  # Guardrails response validation
+    persona_name: Optional[str]  # Persona name for persona-aware responses
+    persona_metadata: Optional[Dict[str, Any]]  # Persona metadata for responses
 
 
 class LangGraphChat:
@@ -56,6 +59,9 @@ class LangGraphChat:
             except Exception as e:
                 print(f"⚠️ Warning: Guardrails service initialization failed: {e}")
                 self.enable_guardrails = False
+
+        # Initialize persona manager
+        self.persona_manager = PersonaManager()
 
         # Initialize LLM with tracing
         self.llm = ChatOpenAI(
@@ -634,39 +640,132 @@ class LangGraphChat:
                     }
                 })
         else:
-            # Text-only analysis
-            answer_prompt = ChatPromptTemplate.from_template(
-                """
-            Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+            # Text-only analysis with optional persona
+            persona_name = state.get("persona_name")
             
-            Context: {context}
-            Question: {query}
+            # Get persona configuration if specified
+            if persona_name:
+                persona_config = self.persona_manager.get_persona(persona_name)
+                if persona_config:
+                    # Create persona-aware prompt
+                    base_prompt = """
+                    Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                    
+                    Context: {context}
+                    Question: {query}
+                    
+                    Provide a clear and helpful answer:
+                    """
+                    
+                    # Add persona modifier to the prompt
+                    persona_prompt = f"{base_prompt}\n\n{persona_config.system_prompt_modifier}"
+                    
+                    answer_prompt = ChatPromptTemplate.from_template(persona_prompt)
+                    
+                    # Use persona temperature
+                    persona_llm = ChatOpenAI(
+                        model="gpt-4o-mini",
+                        temperature=persona_config.temperature,
+                        api_key=self.openai_service.api_key,
+                        callbacks=[self.tracer] if self.tracer else None,
+                    )
+                    chain = answer_prompt | persona_llm
+                    
+                    # Update chain of thought with persona info
+                    state["chain_of_thought"].append({
+                        "step": "generate_answer",
+                        "agent": "Answer Generator",
+                        "thought": f"Using persona: {persona_config.name} ({persona_config.style})",
+                        "status": "in_progress",
+                        "details": {
+                            "persona_name": persona_config.name,
+                            "persona_style": persona_config.style,
+                            "temperature": persona_config.temperature
+                        }
+                    })
+                else:
+                    # Persona not found, use default
+                    answer_prompt = ChatPromptTemplate.from_template(
+                        """
+                        Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                        
+                        Context: {context}
+                        Question: {query}
+                        
+                        Provide a clear and helpful answer:
+                        """
+                    )
+                    chain = answer_prompt | self.llm
+            else:
+                # No persona, use default prompt
+                answer_prompt = ChatPromptTemplate.from_template(
+                    """
+                    Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                    
+                    Context: {context}
+                    Question: {query}
+                    
+                    Provide a clear and helpful answer:
+                    """
+                )
+                chain = answer_prompt | self.llm
             
-            Provide a clear and helpful answer:
-            """
-            )
-            chain = answer_prompt | self.llm
             result = chain.invoke({"query": query, "context": context})
             result_text = str(result.content) if hasattr(result, "content") else str(result)
             state["answer"] = result_text
+            
+            # Add persona metadata to state if persona was used
+            persona_config = None
+            if persona_name:
+                persona_config = self.persona_manager.get_persona(persona_name)
+                if persona_config:
+                    state["persona_metadata"] = {
+                        "persona": {
+                            "name": persona_config.name,
+                            "type": persona_config.persona_type.value,
+                            "style": persona_config.style,
+                            "temperature": persona_config.temperature,
+                            "include_sources": persona_config.include_sources,
+                            "include_confidence": persona_config.include_confidence,
+                            "include_suggestions": persona_config.include_suggestions
+                        }
+                    }
             
             # Update chain of thought with text-only answer
             state["chain_of_thought"].append({
                 "step": "generate_answer",
                 "agent": "Answer Generator",
-                "thought": "Generated answer using text-only analysis",
+                "thought": "Generated answer using text-only analysis" + (f" with {persona_name} persona" if persona_name else ""),
                 "status": "completed",
                 "details": {
                     "method": "text_only",
+                    "persona_used": persona_name if persona_name else None,
                     "answer_length": len(result_text)
                 }
             })
 
         state["sources"] = [chunk.document_id for chunk in search_results]
 
+        # Ensure persona metadata is set if persona is being used
+        persona_name = state.get("persona_name")
+        if persona_name and not state.get("persona_metadata"):
+            persona_config = self.persona_manager.get_persona(persona_name)
+            if persona_config:
+                state["persona_metadata"] = {
+                    "persona": {
+                        "name": persona_config.name,
+                        "type": persona_config.persona_type.value,
+                        "style": persona_config.style,
+                        "temperature": persona_config.temperature,
+                        "include_sources": persona_config.include_sources,
+                        "include_confidence": persona_config.include_confidence,
+                        "include_suggestions": persona_config.include_suggestions
+                    }
+                }
+
         return state
 
-    def chat(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None) -> Dict[str, Any]:
+    def chat(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None, persona_name: Optional[str] = None) -> Dict[str, Any]:
         """Chat with the document-based system with multimodal support"""
         # Always provide a thread_id for the checkpointer
         if not session_id:
@@ -688,10 +787,33 @@ class LangGraphChat:
             multimodal_content=False,
             extracted_text=None,
             chain_of_thought=[],
+            input_validation=None,
+            response_validation=None,
+            persona_name=persona_name,
+            persona_metadata=None
         )
         
         # Run the graph
         result = self.graph.invoke(state, config)
+
+        # Ensure persona metadata is included in final result
+        persona_metadata = result.get("persona_metadata", {})
+        
+        # If persona metadata is missing but persona_name exists, create it
+        if not persona_metadata and result.get("persona_name"):
+            persona_config = self.persona_manager.get_persona(result["persona_name"])
+            if persona_config:
+                persona_metadata = {
+                    "persona": {
+                        "name": persona_config.name,
+                        "type": persona_config.persona_type.value,
+                        "style": persona_config.style,
+                        "temperature": persona_config.temperature,
+                        "include_sources": persona_config.include_sources,
+                        "include_confidence": persona_config.include_confidence,
+                        "include_suggestions": persona_config.include_suggestions
+                    }
+                }
 
         return {
             "answer": result["answer"],
@@ -702,10 +824,11 @@ class LangGraphChat:
             "extracted_text": result.get("extracted_text"),
             "input_validation": result.get("input_validation"),
             "response_validation": result.get("response_validation"),
-            "chain_of_thought": result.get("chain_of_thought", [])
+            "chain_of_thought": result.get("chain_of_thought", []),
+            "persona_metadata": persona_metadata
         }
 
-    async def chat_stream(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None) -> AsyncGenerator[Dict[str, Any], None]:
+    async def chat_stream(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None, persona_name: Optional[str] = None) -> AsyncGenerator[Dict[str, Any], None]:
         """Streaming chat with the document-based system with multimodal support using LangGraph workflow"""
         # Always provide a thread_id for the checkpointer
         if not session_id:
@@ -727,6 +850,10 @@ class LangGraphChat:
             multimodal_content=False,
             extracted_text=None,
             chain_of_thought=[],
+            input_validation=None,
+            response_validation=None,
+            persona_name=persona_name,
+            persona_metadata=None
         )
         
         # Execute the LangGraph workflow for proper tracing
@@ -777,7 +904,8 @@ class LangGraphChat:
             "search_count": state.get("search_count", 0),
             "multimodal_content": multimodal_content,
             "extracted_text": state.get("extracted_text"),
-            "chain_of_thought": state.get("chain_of_thought", [])
+            "chain_of_thought": state.get("chain_of_thought", []),
+            "persona_metadata": state.get("persona_metadata", {})
         }
 
         if multimodal_content and image_data:
@@ -792,27 +920,73 @@ class LangGraphChat:
                     yield chunk
             except Exception as e:
                 # Fallback to text-only streaming analysis
-                async for chunk in self._stream_text_analysis(query, context):
+                async for chunk in self._stream_text_analysis(state):
                     yield chunk
         else:
             # Text-only streaming analysis
-            async for chunk in self._stream_text_analysis(query, context):
+            async for chunk in self._stream_text_analysis(state):
                 yield chunk
 
-    async def _stream_text_analysis(self, query: str, context: str) -> AsyncGenerator[Dict[str, Any], None]:
-        """Stream text-only analysis"""
-        answer_prompt = ChatPromptTemplate.from_template(
-            """
-        Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+    async def _stream_text_analysis(self, state: ChatState) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream text-only analysis with persona support"""
+        query = state["original_query"]
+        context = state.get("context", "")
+        persona_name = state.get("persona_name")
         
-        Context: {context}
-        Question: {query}
-        
-        Provide a clear and helpful answer:
-        """
-        )
-        
-        chain = answer_prompt | self.streaming_llm
+        # Get persona configuration if specified
+        if persona_name:
+            persona_config = self.persona_manager.get_persona(persona_name)
+            if persona_config:
+                # Create persona-aware prompt
+                base_prompt = """
+                Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                
+                Context: {context}
+                Question: {query}
+                
+                Provide a clear and helpful answer:
+                """
+                
+                # Add persona modifier to the prompt
+                persona_prompt = f"{base_prompt}\n\n{persona_config.system_prompt_modifier}"
+                
+                answer_prompt = ChatPromptTemplate.from_template(persona_prompt)
+                
+                # Use persona temperature
+                persona_streaming_llm = ChatOpenAI(
+                    model="gpt-4o-mini",
+                    temperature=persona_config.temperature,
+                    api_key=self.openai_service.api_key,
+                    callbacks=[self.tracer] if self.tracer else None,
+                    streaming=True,
+                )
+                chain = answer_prompt | persona_streaming_llm
+            else:
+                # Persona not found, use default
+                answer_prompt = ChatPromptTemplate.from_template(
+                    """
+                    Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                    
+                    Context: {context}
+                    Question: {query}
+                    
+                    Provide a clear and helpful answer:
+                    """
+                )
+                chain = answer_prompt | self.streaming_llm
+        else:
+            # No persona, use default prompt
+            answer_prompt = ChatPromptTemplate.from_template(
+                """
+                Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+                
+                Context: {context}
+                Question: {query}
+                
+                Provide a clear and helpful answer:
+                """
+            )
+            chain = answer_prompt | self.streaming_llm
         
         try:
             async for chunk in chain.astream({"query": query, "context": context}):

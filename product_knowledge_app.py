@@ -83,6 +83,40 @@ st.markdown("""
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     }
 
+    /* Persona badge styling */
+    .persona-badge {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        display: inline-block;
+        margin: 0.5rem 0;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Persona selection styling */
+    .persona-option {
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 0.75rem;
+        margin: 0.5rem 0;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        transition: all 0.3s ease;
+    }
+
+    .persona-option:hover {
+        background: rgba(255, 255, 255, 0.2);
+        transform: translateY(-2px);
+    }
+
+    .persona-option.selected {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-color: rgba(255, 255, 255, 0.4);
+    }
+
     /* Dashboard specific styling */
     .dashboard-container {
         background: var(--bg-white);
@@ -530,36 +564,69 @@ def upload_document(file_content: bytes, filename: str, product_group: Optional[
     response.raise_for_status()
     return response.json()
 
-def chat_with_documents(query: str, image_data: Optional[bytes] = None, session_id: Optional[str] = None) -> Dict:
-    """Unified chat function that works like ChatGPT - supports both text and images"""
+def chat_with_documents(query: str, image_data: Optional[bytes] = None, session_id: Optional[str] = None, persona_name: Optional[str] = None) -> Dict:
+    """Unified chat function that works like ChatGPT - supports both text and images with optional persona"""
     files = {}
     data = {
         "query": query,
         "session_id": session_id
     }
     
+    # Add persona if specified
+    if persona_name:
+        data["persona_name"] = persona_name
+    
     if image_data:
         files["image"] = ("image.jpg", image_data, "image/jpeg")
     
+    # Always use the unified /chat endpoint
     response = requests.post(get_api_url("/chat"), files=files, data=data)
     response.raise_for_status()
     return response.json()
 
-def chat_with_documents_stream(query: str, image_data: Optional[bytes] = None, session_id: Optional[str] = None):
-    """Streaming chat function that works like ChatGPT - supports both text and images"""
+def chat_with_documents_stream(query: str, image_data: Optional[bytes] = None, session_id: Optional[str] = None, persona_name: Optional[str] = None):
+    """Streaming chat function that works like ChatGPT - supports both text and images with optional persona"""
     files = {}
     data = {
         "query": query,
         "session_id": session_id
     }
     
+    # Add persona if specified
+    if persona_name:
+        data["persona_name"] = persona_name
+    
     if image_data:
         files["image"] = ("image.jpg", image_data, "image/jpeg")
     
-    # Use the streaming endpoint
+    # Always use the unified /chat/stream endpoint
     response = requests.post(get_api_url("/chat/stream"), files=files, data=data, stream=True)
     response.raise_for_status()
     return response
+
+
+
+def get_available_personas() -> List[Dict]:
+    """Get all available personas from the API"""
+    try:
+        url = get_api_url("/personas")
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Failed to get personas: {str(e)}")
+        return []
+
+def get_personas_by_type(persona_type: str) -> List[Dict]:
+    """Get personas by type from the API"""
+    try:
+        url = get_api_url(f"/personas/{persona_type}")
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        print(f"Failed to get personas by type: {str(e)}")
+        return []
 
 def process_streaming_response(response, message_index: int):
     """Process streaming response and update the UI in real-time"""
@@ -584,7 +651,8 @@ def process_streaming_response(response, message_index: int):
                             metadata = {
                                 "sources": data.get("sources", []),
                                 "multimodal_content": data.get("multimodal_content", False),
-                                "extracted_text": data.get("extracted_text")
+                                "extracted_text": data.get("extracted_text"),
+                                "persona_metadata": data.get("persona_metadata", {})
                             }
                             chain_of_thought = data.get("chain_of_thought", [])
                             
@@ -599,6 +667,7 @@ def process_streaming_response(response, message_index: int):
                             # Update the message in session state
                             st.session_state.messages[message_index]["content"] = full_content
                             st.session_state.messages[message_index]["metadata"] = metadata
+                            st.session_state.messages[message_index]["persona_metadata"] = metadata.get("persona_metadata", {})
                             st.session_state.messages[message_index]["is_streaming"] = True
                             st.session_state.messages[message_index]["chain_of_thought"] = chain_of_thought
                             
@@ -865,6 +934,8 @@ def create_performance_gauge(value: float, title: str, min_val: float = 0, max_v
     )
     
     return fig
+
+
 
 def show_monitoring_dashboard():
     """Display the monitoring dashboard"""
@@ -1185,8 +1256,78 @@ def main():
     # Main chat interface
     st.title("💊 iScaps Product Knowledge Assistant")
     
-    # Sidebar - Simplified to only include upload functionality
+    # Initialize persona selection in session state
+    if "selected_persona" not in st.session_state:
+        st.session_state.selected_persona = None
+    
+    # Sidebar - Document upload and persona selection
     with st.sidebar:
+        st.markdown("### 🎭 Persona Selection")
+        
+        # Get available personas
+        try:
+            personas = get_available_personas()
+            
+            if personas:
+                # Create a simple persona selector
+                persona_options = ["Default (No Persona)"] + [p["name"] for p in personas]
+                selected_persona_display = st.selectbox(
+                    "Choose a persona:",
+                    options=persona_options,
+                    index=0,
+                    help="Select a persona to customize how the AI responds"
+                )
+                
+                # Set the selected persona
+                if selected_persona_display == "Default (No Persona)":
+                    st.session_state.selected_persona = None
+                else:
+                    st.session_state.selected_persona = selected_persona_display.lower()
+                
+                # Show current persona info
+                if st.session_state.selected_persona:
+                    current_persona = next((p for p in personas if p['name'].lower() == st.session_state.selected_persona), None)
+                    if current_persona:
+                        st.markdown(f"**Current:** {current_persona['name']}")
+                        st.markdown(f"*{current_persona['description']}*")
+                        
+                        # Show persona characteristics
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Temperature", f"{current_persona['temperature']}")
+                        with col2:
+                            st.metric("Type", current_persona['persona_type'].replace('_', ' ').title())
+                        
+                        # Show features
+                        features = []
+                        if current_persona['include_sources']:
+                            features.append("📚 Sources")
+                        if current_persona['include_confidence']:
+                            features.append("🎯 Confidence")
+                        if current_persona['include_suggestions']:
+                            features.append("💡 Suggestions")
+                        if current_persona['strict_validation']:
+                            features.append("🛡️ Strict")
+                        if current_persona['clinical_safety_check']:
+                            features.append("🏥 Clinical")
+                        
+                        if features:
+                            st.markdown("**Features:**")
+                            st.markdown(" ".join(features))
+                else:
+                    st.markdown("**Current:** Default AI Assistant")
+                    st.markdown("*Standard AI responses without persona customization*")
+                    st.info("💡 Try selecting a persona above to customize response style!")
+                
+            else:
+                st.warning("No personas available")
+                st.session_state.selected_persona = None
+                
+        except Exception as e:
+            st.error(f"Failed to load personas: {str(e)}")
+            st.session_state.selected_persona = None
+        
+        st.markdown("---")
         st.markdown("### 📚 Document Upload")
         
         # Upload section
@@ -1315,6 +1456,15 @@ def main():
             </div>
             """, unsafe_allow_html=True)
             
+            # Show persona badge if available
+            if "persona_metadata" in message and message["persona_metadata"]:
+                persona_meta = message["persona_metadata"]["persona"]
+                st.markdown(f"""
+                <div class="persona-badge">
+                    🎭 {persona_meta['name']} ({persona_meta['style']})
+                </div>
+                """, unsafe_allow_html=True)
+            
             # Show additional info for assistant messages (only when not streaming)
             if "metadata" in message and not is_streaming:
                 metadata = message["metadata"]
@@ -1428,11 +1578,12 @@ def main():
             # Try streaming first
             streaming_success = False
             try:
-                # Use streaming chat function
+                # Use streaming chat function with persona
                 response = chat_with_documents_stream(
                     query=current_query,
                     image_data=image_data,
-                    session_id=get_current_conversation()
+                    session_id=get_current_conversation(),
+                    persona_name=st.session_state.selected_persona
                 )
                 
                 # Process streaming response
@@ -1452,18 +1603,20 @@ def main():
                     response = chat_with_documents(
                         query=current_query,
                         image_data=image_data,
-                        session_id=get_current_conversation()
+                        session_id=get_current_conversation(),
+                        persona_name=st.session_state.selected_persona
                     )
                     
-                    # Update the message with the response
-                    st.session_state.messages[assistant_message_index]["content"] = response["answer"]
-                    st.session_state.messages[assistant_message_index]["metadata"] = {
-                        "sources": response.get("sources", []),
-                        "multimodal_content": response.get("multimodal_content", False),
-                        "extracted_text": response.get("extracted_text")
-                    }
-                    st.session_state.messages[assistant_message_index]["chain_of_thought"] = response.get("chain_of_thought", [])
-                    st.session_state.messages[assistant_message_index]["is_streaming"] = False
+                                    # Update the message with the response
+                st.session_state.messages[assistant_message_index]["content"] = response["answer"]
+                st.session_state.messages[assistant_message_index]["metadata"] = {
+                    "sources": response.get("sources", []),
+                    "multimodal_content": response.get("multimodal_content", False),
+                    "extracted_text": response.get("extracted_text")
+                }
+                st.session_state.messages[assistant_message_index]["chain_of_thought"] = response.get("chain_of_thought", [])
+                st.session_state.messages[assistant_message_index]["persona_metadata"] = response.get("persona_metadata", {})
+                st.session_state.messages[assistant_message_index]["is_streaming"] = False
             
             # Clear both input fields by changing their keys
             st.session_state.text_key = st.session_state.get('text_key', 0) + 1
@@ -1492,13 +1645,44 @@ def main():
         st.markdown(f"**Messages:** {len(st.session_state.messages)}")
     
     with col3:
-        if st.session_state.messages:
+        if st.session_state.selected_persona:
+            st.markdown(f"**Persona:** {st.session_state.selected_persona.title()}")
+        elif st.session_state.messages:
             st.markdown("**Last Query:** " + st.session_state.messages[-1]["content"][:30] + "...")
     
     # Chat tips
     st.markdown("---")
     st.markdown("#### 💡 Chat Tips")
+    
+    # Show persona-specific tips if a persona is selected
+    if st.session_state.selected_persona:
+        st.markdown("**🎭 Persona Mode Active**")
+        
+        # Show persona-specific tips
+        persona_tips = {
+            "summary": "Get quick, bullet-point responses with key information only",
+            "technical": "Receive detailed technical specifications and analysis",
+            "creative": "Enjoy engaging, storytelling responses with examples",
+            "clinical": "Get medical terminology and clinical safety focus",
+            "sales_assistant": "Focus on product benefits and value propositions",
+            "technical_expert": "Access deep technical specifications and compliance",
+            "clinical_advisor": "Medical applications and safety considerations",
+            "training_instructor": "Educational explanations with step-by-step guidance",
+            "analytical": "Data-driven, structured responses with analysis",
+            "conversational": "Friendly, chat-like interactions",
+            "advisory": "Professional consultation style with recommendations",
+            "educational": "Teaching-focused responses with learning objectives"
+        }
+        
+        persona_tip = persona_tips.get(st.session_state.selected_persona, "Custom persona responses")
+        st.markdown(f"**Current Persona:** {persona_tip}")
+        st.markdown("*Switch personas in the sidebar to change response style*")
+    else:
+        st.markdown("**🤖 Default Mode**")
+        st.markdown("Select a persona in the sidebar to customize AI responses")
+    
     st.markdown("""
+    **General Usage:**
     - **Text only**: Just type your question
     - **With image**: Upload an image and ask about it
     - **Product labels**: Upload medication labels for analysis
