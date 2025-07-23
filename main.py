@@ -13,7 +13,7 @@ def setup_dependencies():
     """Setup dependency injection for product knowledge system"""
     # Initialize infrastructure
     openai_service = OpenAIService()
-    document_processor = DocumentProcessor()
+    document_processor = DocumentProcessor(openai_service=openai_service)
     
     # Initialize repository
     repository = DocumentMilvusRepository()
