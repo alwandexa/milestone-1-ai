@@ -92,12 +92,85 @@ async def get_product_group_stats():
         monitoring_service = get_monitoring_service()
         analytics = monitoring_service.get_analytics(days=30)
         
+        # Calculate additional metrics
+        total_queries = analytics["chat_stats"]["total_queries"]
+        product_groups = analytics["product_groups"]
+        
+        # Calculate percentages and rankings
+        for group in product_groups:
+            group["percentage"] = round((group["count"] / max(total_queries, 1)) * 100, 2)
+        
+        # Sort by count descending
+        product_groups.sort(key=lambda x: x["count"], reverse=True)
+        
         return {
-            "product_groups": analytics["product_groups"],
-            "total_queries": analytics["chat_stats"]["total_queries"]
+            "product_groups": product_groups,
+            "total_queries": total_queries,
+            "total_product_group_queries": sum(group["count"] for group in product_groups),
+            "unclassified_queries": total_queries - sum(group["count"] for group in product_groups),
+            "top_product_group": product_groups[0] if product_groups else None,
+            "product_group_coverage": round((sum(group["count"] for group in product_groups) / max(total_queries, 1)) * 100, 2)
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving product group stats: {str(e)}")
+
+@router.get("/stats/product-groups/detailed")
+async def get_detailed_product_group_analytics():
+    """Get detailed product group analytics with trends and insights"""
+    try:
+        monitoring_service = get_monitoring_service()
+        
+        # Get analytics for different time periods
+        analytics_7d = monitoring_service.get_analytics(days=7)
+        analytics_30d = monitoring_service.get_analytics(days=30)
+        
+        # Calculate trends
+        recent_groups = {pg["group"]: pg["count"] for pg in analytics_7d["product_groups"]}
+        historical_groups = {pg["group"]: pg["count"] for pg in analytics_30d["product_groups"]}
+        
+        # Calculate growth rates
+        growth_rates = {}
+        for group in set(recent_groups.keys()) | set(historical_groups.keys()):
+            recent_count = recent_groups.get(group, 0)
+            historical_count = historical_groups.get(group, 0)
+            
+            if historical_count > 0:
+                growth_rate = ((recent_count - historical_count) / historical_count) * 100
+            else:
+                growth_rate = 100 if recent_count > 0 else 0
+            
+            growth_rates[group] = round(growth_rate, 2)
+        
+        # Get top growing and declining groups
+        growing_groups = sorted([(group, rate) for group, rate in growth_rates.items() if rate > 0], 
+                              key=lambda x: x[1], reverse=True)[:5]
+        declining_groups = sorted([(group, rate) for group, rate in growth_rates.items() if rate < 0], 
+                                key=lambda x: x[1])[:5]
+        
+        return {
+            "current_period": {
+                "product_groups": analytics_7d["product_groups"],
+                "total_queries": analytics_7d["chat_stats"]["total_queries"],
+                "coverage": round((sum(pg["count"] for pg in analytics_7d["product_groups"]) / max(analytics_7d["chat_stats"]["total_queries"], 1)) * 100, 2)
+            },
+            "historical_period": {
+                "product_groups": analytics_30d["product_groups"],
+                "total_queries": analytics_30d["chat_stats"]["total_queries"],
+                "coverage": round((sum(pg["count"] for pg in analytics_30d["product_groups"]) / max(analytics_30d["chat_stats"]["total_queries"], 1)) * 100, 2)
+            },
+            "trends": {
+                "growth_rates": growth_rates,
+                "top_growing": [{"group": group, "growth_rate": rate} for group, rate in growing_groups],
+                "top_declining": [{"group": group, "growth_rate": rate} for group, rate in declining_groups]
+            },
+            "insights": {
+                "most_popular": analytics_7d["product_groups"][0] if analytics_7d["product_groups"] else None,
+                "least_popular": analytics_7d["product_groups"][-1] if analytics_7d["product_groups"] else None,
+                "unclassified_percentage": round((analytics_7d["chat_stats"]["total_queries"] - sum(pg["count"] for pg in analytics_7d["product_groups"])) / max(analytics_7d["chat_stats"]["total_queries"], 1) * 100, 2)
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving detailed product group analytics: {str(e)}")
 
 @router.get("/stats/question-types")
 async def get_question_type_stats():

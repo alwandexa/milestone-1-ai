@@ -172,13 +172,71 @@ async def chat_with_documents(
             from src.controller.dashboard_controller import get_monitoring_service
             monitoring_service = get_monitoring_service()
             
-            # Extract product group from context if available
+            # Extract product group from context, sources, and query
             product_group = None
-            if result.get("context"):
-                # Try to extract product group from context
-                context_lower = result["context"].lower()
+            
+            # Check in context, sources, and query
+            search_text = f"{result.get('context', '')} {' '.join(result.get('sources', []))} {query}".lower()
+            
+            # Map common terms to product groups
+            product_group_mapping = {
+                'imaging': ProductGroup.IMAGING_EQUIPMENT,
+                'x-ray': ProductGroup.IMAGING_EQUIPMENT,
+                'ultrasound': ProductGroup.IMAGING_EQUIPMENT,
+                'mri': ProductGroup.IMAGING_EQUIPMENT,
+                'ct': ProductGroup.IMAGING_EQUIPMENT,
+                'surgical': ProductGroup.SURGICAL_INSTRUMENTS,
+                'scalpel': ProductGroup.SURGICAL_INSTRUMENTS,
+                'forceps': ProductGroup.SURGICAL_INSTRUMENTS,
+                'monitoring': ProductGroup.MONITORING_DEVICES,
+                'monitor': ProductGroup.MONITORING_DEVICES,
+                'ecg': ProductGroup.MONITORING_DEVICES,
+                'eeg': ProductGroup.MONITORING_DEVICES,
+                'diagnostic': ProductGroup.DIAGNOSTIC_EQUIPMENT,
+                'diagnosis': ProductGroup.DIAGNOSTIC_EQUIPMENT,
+                'test': ProductGroup.DIAGNOSTIC_EQUIPMENT,
+                'therapeutic': ProductGroup.THERAPEUTIC_DEVICES,
+                'therapy': ProductGroup.THERAPEUTIC_DEVICES,
+                'treatment': ProductGroup.THERAPEUTIC_DEVICES,
+                'orthopedic': ProductGroup.ORTHOPEDIC_DEVICES,
+                'ortho': ProductGroup.ORTHOPEDIC_DEVICES,
+                'bone': ProductGroup.ORTHOPEDIC_DEVICES,
+                'cardiovascular': ProductGroup.CARDIOVASCULAR_DEVICES,
+                'cardiac': ProductGroup.CARDIOVASCULAR_DEVICES,
+                'heart': ProductGroup.CARDIOVASCULAR_DEVICES,
+                'respiratory': ProductGroup.RESPIRATORY_DEVICES,
+                'lung': ProductGroup.RESPIRATORY_DEVICES,
+                'ventilator': ProductGroup.RESPIRATORY_DEVICES,
+                'dental': ProductGroup.DENTAL_EQUIPMENT,
+                'tooth': ProductGroup.DENTAL_EQUIPMENT,
+                'sterilization': ProductGroup.STERILIZATION_EQUIPMENT,
+                'sterile': ProductGroup.STERILIZATION_EQUIPMENT,
+                'autoclave': ProductGroup.STERILIZATION_EQUIPMENT,
+                'mobility': ProductGroup.MOBILITY_AIDS,
+                'wheelchair': ProductGroup.MOBILITY_AIDS,
+                'crutch': ProductGroup.MOBILITY_AIDS,
+                'wound': ProductGroup.WOUND_CARE_DEVICES,
+                'bandage': ProductGroup.WOUND_CARE_DEVICES,
+                'dressing': ProductGroup.WOUND_CARE_DEVICES,
+                'implant': ProductGroup.SURGICAL_IMPLANTS,
+                'prosthesis': ProductGroup.SURGICAL_IMPLANTS,
+                'disposable': ProductGroup.DISPOSABLE_SUPPLIES,
+                'supply': ProductGroup.DISPOSABLE_SUPPLIES,
+                'rehabilitation': ProductGroup.REHABILITATION_EQUIPMENT,
+                'rehab': ProductGroup.REHABILITATION_EQUIPMENT,
+                'physical therapy': ProductGroup.REHABILITATION_EQUIPMENT
+            }
+            
+            # Check for product group matches
+            for term, group in product_group_mapping.items():
+                if term in search_text:
+                    product_group = group.value
+                    break
+            
+            # If no match found, check for exact product group names
+            if not product_group:
                 for group in ProductGroup:
-                    if group.value.lower() in context_lower:
+                    if group.value.lower() in search_text:
                         product_group = group.value
                         break
             
@@ -302,12 +360,71 @@ async def chat_with_documents_stream(
                     # Calculate response time
                     response_time_ms = int((time.time() - start_time) * 1000)
                     
-                    # Extract product group from context if available
+                    # Extract product group from context, sources, and query
                     product_group = None
-                    if context:
-                        context_lower = context.lower()
+                    
+                    # Check in context, sources, and query
+                    search_text = f"{context or ''} {' '.join(sources) if sources else ''} {query}".lower()
+                    
+                    # Map common terms to product groups
+                    product_group_mapping = {
+                        'imaging': ProductGroup.IMAGING_EQUIPMENT,
+                        'x-ray': ProductGroup.IMAGING_EQUIPMENT,
+                        'ultrasound': ProductGroup.IMAGING_EQUIPMENT,
+                        'mri': ProductGroup.IMAGING_EQUIPMENT,
+                        'ct': ProductGroup.IMAGING_EQUIPMENT,
+                        'surgical': ProductGroup.SURGICAL_INSTRUMENTS,
+                        'scalpel': ProductGroup.SURGICAL_INSTRUMENTS,
+                        'forceps': ProductGroup.SURGICAL_INSTRUMENTS,
+                        'monitoring': ProductGroup.MONITORING_DEVICES,
+                        'monitor': ProductGroup.MONITORING_DEVICES,
+                        'ecg': ProductGroup.MONITORING_DEVICES,
+                        'eeg': ProductGroup.MONITORING_DEVICES,
+                        'diagnostic': ProductGroup.DIAGNOSTIC_EQUIPMENT,
+                        'diagnosis': ProductGroup.DIAGNOSTIC_EQUIPMENT,
+                        'test': ProductGroup.DIAGNOSTIC_EQUIPMENT,
+                        'therapeutic': ProductGroup.THERAPEUTIC_DEVICES,
+                        'therapy': ProductGroup.THERAPEUTIC_DEVICES,
+                        'treatment': ProductGroup.THERAPEUTIC_DEVICES,
+                        'orthopedic': ProductGroup.ORTHOPEDIC_DEVICES,
+                        'ortho': ProductGroup.ORTHOPEDIC_DEVICES,
+                        'bone': ProductGroup.ORTHOPEDIC_DEVICES,
+                        'cardiovascular': ProductGroup.CARDIOVASCULAR_DEVICES,
+                        'cardiac': ProductGroup.CARDIOVASCULAR_DEVICES,
+                        'heart': ProductGroup.CARDIOVASCULAR_DEVICES,
+                        'respiratory': ProductGroup.RESPIRATORY_DEVICES,
+                        'lung': ProductGroup.RESPIRATORY_DEVICES,
+                        'ventilator': ProductGroup.RESPIRATORY_DEVICES,
+                        'dental': ProductGroup.DENTAL_EQUIPMENT,
+                        'tooth': ProductGroup.DENTAL_EQUIPMENT,
+                        'sterilization': ProductGroup.STERILIZATION_EQUIPMENT,
+                        'sterile': ProductGroup.STERILIZATION_EQUIPMENT,
+                        'autoclave': ProductGroup.STERILIZATION_EQUIPMENT,
+                        'mobility': ProductGroup.MOBILITY_AIDS,
+                        'wheelchair': ProductGroup.MOBILITY_AIDS,
+                        'crutch': ProductGroup.MOBILITY_AIDS,
+                        'wound': ProductGroup.WOUND_CARE_DEVICES,
+                        'bandage': ProductGroup.WOUND_CARE_DEVICES,
+                        'dressing': ProductGroup.WOUND_CARE_DEVICES,
+                        'implant': ProductGroup.SURGICAL_IMPLANTS,
+                        'prosthesis': ProductGroup.SURGICAL_IMPLANTS,
+                        'disposable': ProductGroup.DISPOSABLE_SUPPLIES,
+                        'supply': ProductGroup.DISPOSABLE_SUPPLIES,
+                        'rehabilitation': ProductGroup.REHABILITATION_EQUIPMENT,
+                        'rehab': ProductGroup.REHABILITATION_EQUIPMENT,
+                        'physical therapy': ProductGroup.REHABILITATION_EQUIPMENT
+                    }
+                    
+                    # Check for product group matches
+                    for term, group in product_group_mapping.items():
+                        if term in search_text:
+                            product_group = group.value
+                            break
+                    
+                    # If no match found, check for exact product group names
+                    if not product_group:
                         for group in ProductGroup:
-                            if group.value.lower() in context_lower:
+                            if group.value.lower() in search_text:
                                 product_group = group.value
                                 break
                     
