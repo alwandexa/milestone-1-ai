@@ -228,30 +228,116 @@ st.markdown("""
         display: none;
     }
 
-    /* Custom input styling */
-    .custom-input-container {
+    /* Chat input container - unified design like Cursor */
+    .chat-input-container {
         display: flex;
         align-items: center;
-        gap: 1rem;
-        height: 100%;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 0.75rem 1rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        gap: 0.75rem;
+        min-height: 56px;
     }
 
-    .custom-input-field {
+    .chat-input-field {
         flex: 1;
-        padding: 0.75rem;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
+        border: none;
+        outline: none;
         font-size: 1rem;
+        padding: 0.5rem 0;
+        background: transparent;
+        color: #1f2937;
+        min-height: 24px;
+        resize: none;
     }
 
-    .custom-upload-area {
-        width: 120px;
+    .chat-input-field::placeholder {
+        color: #9ca3af;
+    }
+
+    .input-actions {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .attachment-button {
+        background: transparent;
+        border: none;
+        border-radius: 6px;
         padding: 0.5rem;
-        border: 1px solid #d1d5db;
-        border-radius: 8px;
-        text-align: center;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        color: #6b7280;
+    }
+
+    .attachment-button:hover {
+        background: #e5e7eb;
+        color: #374151;
+    }
+
+    .send-button {
+        background: #3b82f6;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 0.5rem 1rem;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        font-weight: 500;
         font-size: 0.875rem;
+        min-width: 60px;
+        height: 36px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        float: right;
+    }
+
+    .send-button:hover {
+        background: #2563eb;
+        transform: translateY(-1px);
+    }
+
+    .send-button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+        transform: none;
+    }
+
+    .file-preview {
         background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 0.5rem;
+        margin-top: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .file-preview img {
+        width: 40px;
+        height: 40px;
+        object-fit: cover;
+        border-radius: 4px;
+    }
+
+    .remove-file {
+        background: #ef4444;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        padding: 0.25rem 0.5rem;
+        cursor: pointer;
+        font-size: 0.75rem;
     }
 
     /* Modern chat header */
@@ -494,28 +580,30 @@ def main():
     
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Input area
-    # st.markdown('<div class="input-area">', unsafe_allow_html=True)
     
-    # Custom input interface
-    col1, col2 = st.columns([4, 1])
+    # Text input field (takes most space)
+    prompt = st.text_input("Ask about product knowledge...", key="user_input", label_visibility="collapsed")
     
-    with col1:
-        prompt = st.text_input("Ask about product knowledge...", key="user_input", label_visibility="collapsed")
+    # Action buttons container
+    st.markdown('<div class="input-actions">', unsafe_allow_html=True)
     
-    with col2:
-        uploaded_image = st.file_uploader(
-            "📷",
-            type=['png', 'jpg', 'jpeg'],
-            key="chat_image_uploader",
-            label_visibility="collapsed",
-            help="Attach an image to your message"
-        )
+    # Attachment button
+    uploaded_image = st.file_uploader(
+        "📎",
+        type=['png', 'jpg', 'jpeg'],
+        key="chat_image_uploader",
+        label_visibility="collapsed",
+        help="Attach an image to your message"
+    )
     
+    # Send button
+    send_clicked = st.button("Send", key="send_button", type="primary")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # Handle message submission
-    if prompt or uploaded_image or st.session_state.get("quick_question_triggered"):
+    if (prompt and send_clicked) or (uploaded_image and send_clicked) or st.session_state.get("quick_question_triggered"):
         # Determine the query to use
         current_query = prompt
         if st.session_state.get("quick_question_triggered"):
