@@ -234,35 +234,122 @@ async def chat_with_documents_stream(
     image: Optional[UploadFile] = File(None)
 ):
     """Streaming chat endpoint that works like ChatGPT - supports both text and images"""
+    import time
+    start_time = time.time()
+    
     try:
         chat = get_langgraph_chat()
         
         # Read image data if provided
         image_data = None
+        multimodal = False
+        extracted_text = None
         if image:
             if not image.content_type.startswith('image/'):
                 raise HTTPException(status_code=400, detail="Only image files are supported")
             image_data = await image.read()
+            multimodal = True
+        
+        # Collect the full response for monitoring
+        full_response = ""
+        chain_of_thought = []
+        sources = []
+        context = ""
+        confidence_score = 0.5
+        input_validation = None
+        response_validation = None
+        extracted_text = None
         
         async def generate_stream() -> AsyncGenerator[str, None]:
             """Generate streaming response"""
+            nonlocal full_response, chain_of_thought, sources, context, confidence_score, input_validation, response_validation, extracted_text
+            
             try:
                 async for chunk in chat.chat_stream(
                     query=query,
                     session_id=session_id,
                     image_data=image_data
                 ):
+                    # Collect response data for monitoring
+                    if isinstance(chunk, dict):
+                        if chunk.get('type') == 'content':
+                            full_response += chunk.get('content', '')
+                        elif chunk.get('type') == 'metadata':
+                            # Extract metadata from the initial metadata chunk
+                            chain_of_thought = chunk.get('chain_of_thought', [])
+                            sources = chunk.get('sources', [])
+                            extracted_text = chunk.get('extracted_text')
+                            # Extract confidence score from chain of thought if available
+                            for thought in chain_of_thought:
+                                if thought.get('step') == 'input_validation' and thought.get('status') == 'completed':
+                                    details = thought.get('details', {})
+                                    confidence_score = details.get('confidence_score', 0.5)
+                                elif thought.get('step') == 'response_validation' and thought.get('status') == 'completed':
+                                    details = thought.get('details', {})
+                                    confidence_score = details.get('confidence_score', 0.5)
+                    
                     # Send each chunk as a Server-Sent Event
                     yield f"data: {json.dumps(chunk)}\n\n"
                 
                 # Send end marker
                 yield f"data: {json.dumps({'type': 'end'})}\n\n"
+                
+                # Log the chat event for monitoring after streaming is complete
+                try:
+                    from src.controller.dashboard_controller import get_monitoring_service
+                    monitoring_service = get_monitoring_service()
+                    
+                    # Calculate response time
+                    response_time_ms = int((time.time() - start_time) * 1000)
+                    
+                    # Extract product group from context if available
+                    product_group = None
+                    if context:
+                        context_lower = context.lower()
+                        for group in ProductGroup:
+                            if group.value.lower() in context_lower:
+                                product_group = group.value
+                                break
+                    
+                    monitoring_service.log_chat_event(
+                        query=query,
+                        response=full_response,
+                        session_id=session_id,
+                        product_group=product_group,
+                        response_time_ms=response_time_ms,
+                        token_count=len(full_response.split()),  # Approximate token count
+                        confidence_score=confidence_score,
+                        sources_count=len(sources),
+                        chain_of_thought=chain_of_thought,
+                        input_validation=input_validation,
+                        response_validation=response_validation,
+                        multimodal=multimodal,
+                        extracted_text=extracted_text
+                    )
+                except Exception as monitoring_error:
+                    # Don't fail the main request if monitoring fails
+                    print(f"Monitoring error in streaming: {monitoring_error}")
+                
             except Exception as e:
                 error_chunk = {
                     'type': 'error',
                     'content': f"Error: {str(e)}"
                 }
                 yield f"data: {json.dumps(error_chunk)}\n\n"
+                
+                # Log error event
+                try:
+                    from src.controller.dashboard_controller import get_monitoring_service
+                    monitoring_service = get_monitoring_service()
+                    monitoring_service.log_system_event(
+                        component="chat_stream",
+                        operation="chat_with_documents_stream",
+                        status="failed",
+                        session_id=session_id,
+                        error_message=str(e)
+                    )
+                except:
+                    pass
         
         return StreamingResponse(
             generate_stream(),
@@ -274,6 +361,20 @@ async def chat_with_documents_stream(
             }
         )
     except Exception as e:
+        # Log error event
+        try:
+            from src.controller.dashboard_controller import get_monitoring_service
+            monitoring_service = get_monitoring_service()
+            monitoring_service.log_system_event(
+                component="chat_stream",
+                operation="chat_with_documents_stream",
+                status="failed",
+                session_id=session_id,
+                error_message=str(e)
+            )
+        except:
+            pass
+        
         raise HTTPException(status_code=500, detail=f"Error in streaming chat: {str(e)}")
 
 @app.get("/documents", response_model=List[DocumentResponse])
