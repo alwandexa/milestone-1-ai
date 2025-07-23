@@ -79,6 +79,7 @@ async def get_summary_stats():
             "success_rate": analytics["chat_stats"]["success_rate"],
             "avg_response_time": analytics["chat_stats"]["avg_response_time"],
             "total_uploads": analytics["document_stats"]["total_uploads"],
+            "distinct_product_groups": len(analytics["product_groups"]),
             "top_product_group": analytics["product_groups"][0]["group"] if analytics["product_groups"] else None,
             "top_question_type": analytics["question_types"][0]["type"] if analytics["question_types"] else None
         }
@@ -171,6 +172,65 @@ async def get_detailed_product_group_analytics():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving detailed product group analytics: {str(e)}")
+
+@router.get("/stats/product-diversity")
+async def get_product_diversity_analytics():
+    """Get product diversity analytics and insights"""
+    try:
+        monitoring_service = get_monitoring_service()
+        
+        # Get analytics for different time periods
+        analytics_7d = monitoring_service.get_analytics(days=7)
+        analytics_30d = monitoring_service.get_analytics(days=30)
+        
+        # Calculate diversity metrics
+        recent_groups = analytics_7d["product_groups"]
+        historical_groups = analytics_30d["product_groups"]
+        
+        # Calculate diversity scores
+        total_possible_groups = 16  # Total number of product groups defined
+        recent_diversity = len(recent_groups)
+        historical_diversity = len(historical_groups)
+        
+        # Calculate coverage percentage
+        recent_coverage = (recent_diversity / total_possible_groups) * 100
+        historical_coverage = (historical_diversity / total_possible_groups) * 100
+        
+        # Find most and least diverse periods
+        most_diverse_period = "7 days" if recent_diversity > historical_diversity else "30 days"
+        diversity_change = recent_diversity - historical_diversity
+        
+        # Get top product groups by frequency
+        top_groups = sorted(recent_groups, key=lambda x: x["count"], reverse=True)[:5]
+        
+        # Calculate average queries per group
+        total_queries = analytics_7d["chat_stats"]["total_queries"]
+        avg_queries_per_group = total_queries / max(recent_diversity, 1)
+        
+        return {
+            "diversity_metrics": {
+                "distinct_groups_recent": recent_diversity,
+                "distinct_groups_historical": historical_diversity,
+                "total_possible_groups": total_possible_groups,
+                "coverage_percentage_recent": round(recent_coverage, 2),
+                "coverage_percentage_historical": round(historical_coverage, 2),
+                "diversity_change": diversity_change,
+                "most_diverse_period": most_diverse_period
+            },
+            "engagement_metrics": {
+                "total_queries": total_queries,
+                "avg_queries_per_group": round(avg_queries_per_group, 2),
+                "top_groups": top_groups,
+                "unclassified_queries": total_queries - sum(group["count"] for group in recent_groups)
+            },
+            "insights": {
+                "diversity_score": round(recent_coverage, 1),
+                "engagement_level": "High" if avg_queries_per_group > 2 else "Medium" if avg_queries_per_group > 1 else "Low",
+                "recommendation": "Consider adding more product documentation" if recent_coverage < 50 else "Good product diversity coverage"
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving product diversity analytics: {str(e)}")
 
 @router.get("/stats/question-types")
 async def get_question_type_stats():

@@ -83,6 +83,61 @@ st.markdown("""
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     }
 
+    /* Dashboard specific styling */
+    .dashboard-container {
+        background: var(--bg-white);
+        border-radius: 15px;
+        padding: 2rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+        border: 1px solid rgba(59, 130, 246, 0.1);
+    }
+
+    /* Metric cards styling */
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin: 0.5rem 0;
+        color: white;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        transition: transform 0.3s ease;
+    }
+
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    /* Chart containers */
+    .chart-container {
+        background: var(--bg-white);
+        border-radius: 10px;
+        padding: 1rem;
+        margin: 1rem 0;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        border: 1px solid rgba(59, 130, 246, 0.1);
+    }
+
+    /* Section headers */
+    .section-header {
+        color: var(--text-dark);
+        font-weight: 600;
+        font-size: 1.2rem;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid var(--accent-blue);
+    }
+
+    /* Activity expanders */
+    .activity-expander {
+        background: var(--bg-light);
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        border-left: 4px solid var(--accent-blue);
+    }
+
     /* Vivid button styling */
     .stButton > button {
         background: linear-gradient(135deg, #10b981, #059669);
@@ -818,6 +873,8 @@ def show_monitoring_dashboard():
     
     # Sidebar for controls
     with st.sidebar:
+        st.markdown('<div class="sidebar-container">', unsafe_allow_html=True)
+        
         st.header("🎛️ Dashboard Controls")
         
         # Time range selector
@@ -832,7 +889,7 @@ def show_monitoring_dashboard():
         auto_refresh = st.checkbox("Auto-refresh", value=True, help="Automatically refresh data every 30 seconds")
         
         # Refresh button
-        if st.button("🔄 Refresh Data"):
+        if st.button("🔄 Refresh Data", use_container_width=True):
             st.rerun()
         
         st.markdown("---")
@@ -844,163 +901,268 @@ def show_monitoring_dashboard():
             if summary_response.status_code == 200:
                 summary = summary_response.json()
                 
-                st.metric("Total Queries", summary.get("total_queries", 0))
-                st.metric("Success Rate", f"{summary.get('success_rate', 0):.1f}%")
-                st.metric("Avg Response Time", f"{summary.get('avg_response_time', 0):.0f}ms")
-                st.metric("Total Uploads", summary.get("total_uploads", 0))
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Total Queries", summary.get("total_queries", 0))
+                    st.metric("Success Rate", f"{summary.get('success_rate', 0):.1f}%")
+                    st.metric("Distinct Product Groups", summary.get("distinct_product_groups", 0))
+                with col2:
+                    st.metric("Avg Response Time", f"{summary.get('avg_response_time', 0):.0f}ms")
+                    st.metric("Total Uploads", summary.get("total_uploads", 0))
             else:
                 st.error("Failed to fetch summary stats")
         except Exception as e:
             st.error(f"Error fetching summary: {str(e)}")
+        
+        st.markdown("---")
+        st.markdown("### 🚀 Quick Actions")
+        
+        # Quick action buttons
+        if st.button("📊 View Detailed Analytics", use_container_width=True):
+            st.info("Navigate to the detailed analytics section below")
+        
+        if st.button("📋 Export Data", use_container_width=True):
+            st.info("Export functionality coming soon!")
+        
+        st.markdown('</div>', unsafe_allow_html=True)
     
     # Main dashboard content
-    col1, col2 = st.columns([2, 1])
+    st.markdown('<div class="dashboard-container">', unsafe_allow_html=True)
     
-    with col1:
-        st.header("📊 System Analytics")
+    st.header("📊 System Analytics Dashboard")
+    
+    # Fetch analytics data
+    analytics = fetch_analytics(days)
+    
+    if analytics:
+        chat_stats = analytics.get("chat_stats", {})
         
-        # Fetch analytics data
-        analytics = fetch_analytics(days)
+        # ===== TOP SECTION: KEY METRICS =====
+        st.subheader("📈 Key Performance Indicators")
         
-        if analytics:
-            chat_stats = analytics.get("chat_stats", {})
+        # Key metrics row - 5 equal columns
+        metric_col1, metric_col2, metric_col3, metric_col4, metric_col5 = st.columns(5)
+        
+        with metric_col1:
+            create_metric_card(
+                "Total Queries",
+                f"{chat_stats.get('total_queries', 0):,}",
+                f"Last {days} days"
+            )
+        
+        with metric_col2:
+            create_metric_card(
+                "Success Rate",
+                f"{chat_stats.get('success_rate', 0):.1f}%",
+                "Agent performance"
+            )
+        
+        with metric_col3:
+            create_metric_card(
+                "Avg Response Time",
+                f"{chat_stats.get('avg_response_time', 0):.0f}ms",
+                "System performance"
+            )
+        
+        with metric_col4:
+            create_metric_card(
+                "Multimodal Queries",
+                f"{chat_stats.get('multimodal_queries', 0):,}",
+                "Image + text queries"
+            )
+        
+        with metric_col5:
+            # Calculate distinct product groups
+            product_groups = analytics.get("product_groups", [])
+            distinct_groups = len(product_groups)
+            create_metric_card(
+                "Distinct Product Groups",
+                f"{distinct_groups}",
+                "Product diversity"
+            )
+        
+        st.markdown("---")
+        
+        # ===== MIDDLE SECTION: CHARTS =====
+        st.subheader("📊 Analytics & Trends")
+        
+        # First row: Activity and Question Types
+        chart_row1_col1, chart_row1_col2 = st.columns(2)
+        
+        with chart_row1_col1:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("#### 📅 Daily Activity")
+            daily_fig = create_daily_activity_chart(analytics.get("daily_activity", []))
+            if daily_fig:
+                st.plotly_chart(daily_fig, use_container_width=True, height=300)
+            else:
+                st.info("No daily activity data available")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with chart_row1_col2:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("#### ❓ Question Type Distribution")
+            question_fig = create_question_type_chart(analytics.get("question_types", []))
+            if question_fig:
+                st.plotly_chart(question_fig, use_container_width=True, height=300)
+            else:
+                st.info("No question type data available")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Second row: Product Groups and Performance
+        chart_row2_col1, chart_row2_col2 = st.columns(2)
+        
+        with chart_row2_col1:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("#### 🏥 Product Group Distribution")
+            product_fig = create_product_group_chart(analytics.get("product_groups", []))
+            if product_fig:
+                st.plotly_chart(product_fig, use_container_width=True, height=300)
+            else:
+                st.info("No product group data available")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with chart_row2_col2:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.markdown("#### 🎯 Performance Metrics")
             
-            # Key metrics row
-            col1, col2, col3, col4 = st.columns(4)
+            # Performance gauges in a more compact layout
+            gauge_col1, gauge_col2 = st.columns(2)
             
-            with col1:
-                create_metric_card(
-                    "Total Queries",
-                    f"{chat_stats.get('total_queries', 0):,}",
-                    f"Last {days} days"
-                )
-            
-            with col2:
-                create_metric_card(
-                    "Success Rate",
-                    f"{chat_stats.get('success_rate', 0):.1f}%",
-                    "Agent performance"
-                )
-            
-            with col3:
-                create_metric_card(
-                    "Avg Response Time",
-                    f"{chat_stats.get('avg_response_time', 0):.0f}ms",
-                    "System performance"
-                )
-            
-            with col4:
-                create_metric_card(
-                    "Multimodal Queries",
-                    f"{chat_stats.get('multimodal_queries', 0):,}",
-                    "Image + text queries"
-                )
-            
-            # Charts row
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Daily activity chart
-                daily_fig = create_daily_activity_chart(analytics.get("daily_activity", []))
-                if daily_fig:
-                    st.plotly_chart(daily_fig, use_container_width=True)
-                else:
-                    st.info("No daily activity data available")
-            
-            with col2:
-                # Question type distribution
-                question_fig = create_question_type_chart(analytics.get("question_types", []))
-                if question_fig:
-                    st.plotly_chart(question_fig, use_container_width=True)
-                else:
-                    st.info("No question type data available")
-            
-            # Product groups and performance
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                # Product group distribution
-                product_fig = create_product_group_chart(analytics.get("product_groups", []))
-                if product_fig:
-                    st.plotly_chart(product_fig, use_container_width=True)
-                else:
-                    st.info("No product group data available")
-            
-            with col2:
-                # Performance gauges
-                st.subheader("🎯 Performance Metrics")
-                
-                # Success rate gauge
+            with gauge_col1:
                 success_gauge = create_performance_gauge(
                     chat_stats.get('success_rate', 0),
-                    "Success Rate (%)",
+                    "Success Rate",
                     0, 100
                 )
-                st.plotly_chart(success_gauge, use_container_width=True)
-                
-                # Average confidence gauge
+                st.plotly_chart(success_gauge, use_container_width=True, height=200)
+            
+            with gauge_col2:
                 confidence_gauge = create_performance_gauge(
                     chat_stats.get('avg_confidence', 0) * 100,
-                    "Avg Confidence (%)",
+                    "Avg Confidence",
                     0, 100
                 )
-                st.plotly_chart(confidence_gauge, use_container_width=True)
+                st.plotly_chart(confidence_gauge, use_container_width=True, height=200)
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        else:
-            st.error("Failed to load analytics data")
-    
-    with col2:
-        st.header("📋 Recent Activity")
+        st.markdown("---")
+        
+        # ===== PRODUCT DIVERSITY SECTION =====
+        st.subheader("🏥 Product Diversity Analytics")
+        
+        # Fetch product diversity analytics
+        try:
+            diversity_response = requests.get(get_api_url("/dashboard/stats/product-diversity"))
+            if diversity_response.status_code == 200:
+                diversity_data = diversity_response.json()
+                
+                # Display diversity metrics in columns
+                div_col1, div_col2, div_col3 = st.columns(3)
+                
+                with div_col1:
+                    st.markdown("#### 📊 Diversity Metrics")
+                    st.metric(
+                        "Distinct Groups", 
+                        diversity_data["diversity_metrics"]["distinct_groups_recent"],
+                        f"of {diversity_data['diversity_metrics']['total_possible_groups']} total"
+                    )
+                    st.metric(
+                        "Coverage", 
+                        f"{diversity_data['diversity_metrics']['coverage_percentage_recent']}%",
+                        f"Product groups covered"
+                    )
+                
+                with div_col2:
+                    st.markdown("#### 📈 Engagement Metrics")
+                    st.metric(
+                        "Avg Queries/Group", 
+                        diversity_data["engagement_metrics"]["avg_queries_per_group"],
+                        "Engagement level"
+                    )
+                    st.metric(
+                        "Unclassified", 
+                        diversity_data["engagement_metrics"]["unclassified_queries"],
+                        "Queries without product group"
+                    )
+                
+                with div_col3:
+                    st.markdown("#### 💡 Insights")
+                    st.info(f"**Diversity Score:** {diversity_data['insights']['diversity_score']}%")
+                    st.info(f"**Engagement Level:** {diversity_data['insights']['engagement_level']}")
+                    st.success(f"**Recommendation:** {diversity_data['insights']['recommendation']}")
+            
+            else:
+                st.warning("Could not load product diversity analytics")
+        except Exception as e:
+            st.warning(f"Error loading product diversity data: {str(e)}")
+        
+        st.markdown("---")
+        
+        # ===== BOTTOM SECTION: RECENT ACTIVITY =====
+        st.subheader("📋 Recent Activity")
         
         # Fetch recent events
         events = fetch_recent_events(20)
         
         if events:
-            # Recent chat events
-            st.subheader("💬 Recent Chat Events")
-            chat_events = events.get("chat_events", [])
+            # Three columns for different activity types
+            activity_col1, activity_col2, activity_col3 = st.columns(3)
             
-            for event in chat_events[:5]:
-                with st.expander(f"Query: {event['query'][:50]}..."):
-                    st.write(f"**Response:** {event['response'][:100]}...")
-                    st.write(f"**Type:** {event['question_type']}")
-                    st.write(f"**Product Group:** {event['product_group'] or 'N/A'}")
-                    st.write(f"**Response Time:** {event['response_time_ms']}ms")
-                    st.write(f"**Confidence:** {event['confidence_score']:.2f}")
-                    
-                    # Status indicator
-                    status = event['agent_status']
-                    if status == 'success':
-                        st.success("✅ Success")
-                    elif status == 'partial':
-                        st.warning("⚠️ Partial")
-                    else:
-                        st.error("❌ Failed")
+            with activity_col1:
+                st.markdown("#### 💬 Recent Chat Events")
+                chat_events = events.get("chat_events", [])
+                
+                for i, event in enumerate(chat_events[:5]):
+                    with st.expander(f"Query {i+1}: {event['query'][:40]}...", expanded=False):
+                        st.write(f"**Response:** {event['response'][:80]}...")
+                        st.write(f"**Type:** {event['question_type']}")
+                        st.write(f"**Product Group:** {event['product_group'] or 'N/A'}")
+                        st.write(f"**Response Time:** {event['response_time_ms']}ms")
+                        st.write(f"**Confidence:** {event['confidence_score']:.2f}")
+                        
+                        # Status indicator
+                        status = event['agent_status']
+                        if status == 'success':
+                            st.success("✅ Success")
+                        elif status == 'partial':
+                            st.warning("⚠️ Partial")
+                        else:
+                            st.error("❌ Failed")
             
-            # Recent document events
-            st.subheader("📄 Recent Document Uploads")
-            doc_events = events.get("document_events", [])
+            with activity_col2:
+                st.markdown("#### 📄 Recent Document Uploads")
+                doc_events = events.get("document_events", [])
+                
+                for i, event in enumerate(doc_events[:3]):
+                    with st.expander(f"File {i+1}: {event['filename'][:30]}...", expanded=False):
+                        st.write(f"**Size:** {event['file_size']:,} bytes")
+                        st.write(f"**Chunks:** {event['chunk_count']}")
+                        st.write(f"**Product Group:** {event['product_group'] or 'N/A'}")
+                        st.write(f"**Processing Time:** {event['processing_time_ms']}ms")
             
-            for event in doc_events[:3]:
-                with st.expander(f"File: {event['filename']}"):
-                    st.write(f"**Size:** {event['file_size']:,} bytes")
-                    st.write(f"**Chunks:** {event['chunk_count']}")
-                    st.write(f"**Product Group:** {event['product_group'] or 'N/A'}")
-                    st.write(f"**Processing Time:** {event['processing_time_ms']}ms")
-            
-            # Recent system events
-            st.subheader("⚙️ Recent System Events")
-            sys_events = events.get("system_events", [])
-            
-            for event in sys_events[:3]:
-                with st.expander(f"{event['component']} - {event['operation']}"):
-                    st.write(f"**Status:** {event['status']}")
-                    st.write(f"**Timestamp:** {event['timestamp']}")
-                    if event['error_message']:
-                        st.error(f"**Error:** {event['error_message']}")
+            with activity_col3:
+                st.markdown("#### ⚙️ Recent System Events")
+                sys_events = events.get("system_events", [])
+                
+                if sys_events:
+                    for i, event in enumerate(sys_events[:3]):
+                        with st.expander(f"Event {i+1}: {event['component']}", expanded=False):
+                            st.write(f"**Operation:** {event['operation']}")
+                            st.write(f"**Status:** {event['status']}")
+                            st.write(f"**Timestamp:** {event['timestamp']}")
+                            if event['error_message']:
+                                st.error(f"**Error:** {event['error_message']}")
+                else:
+                    st.info("No system events recorded")
         
         else:
             st.error("Failed to load recent events")
+    
+    else:
+        st.error("Failed to load analytics data")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Auto-refresh functionality
     if auto_refresh:
