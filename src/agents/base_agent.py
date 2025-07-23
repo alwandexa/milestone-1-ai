@@ -31,7 +31,7 @@ class BaseAgent(ABC):
         self.guardrails_service = None
         if self.enable_guardrails:
             try:
-                self.guardrails_service = GuardrailsService()
+                self.guardrails_service = GuardrailsService(enable_guardrails=True)
             except Exception as e:
                 print(f"⚠️ Warning: Guardrails service initialization failed for {name}: {e}")
                 self.enable_guardrails = False

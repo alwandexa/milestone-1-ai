@@ -1,10 +1,8 @@
 import os
-import json
+import re
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
-import requests
-from pydantic import BaseModel
-from .guardrails_config import GuardrailsConfig, get_validation_config, get_error_message
+from guardrails import Guard, OnFailAction
 
 
 @dataclass
@@ -18,23 +16,39 @@ class GuardrailsValidationResult:
 
 
 class GuardrailsService:
-    """Service for integrating Guardrails AI validation"""
+    """Service for integrating Guardrails AI validation using basic validation logic"""
     
-    def __init__(self, config: Optional[GuardrailsConfig] = None):
-        self.api_key = os.getenv("GUARDRAILS_API_KEY")
-        if not self.api_key:
-            raise ValueError("GUARDRAILS_API_KEY environment variable is required")
+    def __init__(self, enable_guardrails: bool = True):
+        self.enable_guardrails = enable_guardrails
         
-        self.config = config or get_validation_config()
-        self.base_url = "https://api.guardrails.ai/v2"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        if not enable_guardrails:
+            return
+        
+        # Initialize basic validation patterns
+        self._setup_validation_patterns()
+    
+    def _setup_validation_patterns(self):
+        """Setup basic validation patterns for content filtering"""
+        
+        # Toxic language patterns
+        self.toxic_patterns = [
+            r'\b(shut\s+up|fuck|shit|damn|hell|ass|bitch|bastard)\b',
+            r'\b(kill|murder|suicide|die|death)\b',
+            r'\b(hate|racist|sexist|homophobic)\b',
+            r'\b(violence|weapon|bomb|explosive)\b'
+        ]
+        
+        # Competitor names
+        self.competitor_names = [
+            "Kalbe", "Phapros", "Kimia Farma", "Indofarma"
+        ]
+        
+        # Compile patterns
+        self.toxic_regex = re.compile('|'.join(self.toxic_patterns), re.IGNORECASE)
     
     def validate_user_input(self, user_input: str, context: Optional[str] = None) -> GuardrailsValidationResult:
         """
-        Validate user input for safety and appropriateness
+        Validate user input for safety and appropriateness using basic validation
         
         Args:
             user_input: The user's query or input
@@ -43,48 +57,46 @@ class GuardrailsService:
         Returns:
             GuardrailsValidationResult with validation details
         """
-        if not self.config.input_validation_enabled:
+        if not self.enable_guardrails:
             return GuardrailsValidationResult(
                 is_valid=True,
                 violations=[],
                 validation_type="input_validation"
             )
         
-        try:
-            payload = {
-                "text": user_input,
-                "validation_type": "input_safety",
-                "context": context or "Product knowledge chatbot conversation",
-                "checks": self.config.input_checks
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/validate",
-                headers=self.headers,
-                json=payload,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return self._parse_validation_response(data, "input_validation")
-            else:
-                return GuardrailsValidationResult(
-                    is_valid=False,
-                    violations=[{"error": f"API error: {response.status_code}"}],
-                    validation_type="input_validation"
-                )
-                
-        except Exception as e:
-            return GuardrailsValidationResult(
-                is_valid=False,
-                violations=[{"error": f"Validation failed: {str(e)}"}],
-                validation_type="input_validation"
-            )
+        violations = []
+        
+        # Check for toxic language
+        if self.toxic_regex.search(user_input):
+            violations.append({
+                "type": "toxic_language",
+                "error": "Content contains inappropriate language",
+                "details": "Toxic language detected in input"
+            })
+        
+        # Check for competitor mentions
+        for competitor in self.competitor_names:
+            if competitor.lower() in user_input.lower():
+                violations.append({
+                    "type": "competitor_mention",
+                    "error": f"Content mentions competitor: {competitor}",
+                    "details": f"Competitor '{competitor}' mentioned in input"
+                })
+                break
+        
+        is_valid = len(violations) == 0
+        confidence_score = 1.0 if is_valid else 0.0
+        
+        return GuardrailsValidationResult(
+            is_valid=is_valid,
+            violations=violations,
+            confidence_score=confidence_score,
+            validation_type="input_validation"
+        )
 
     def validate_agent_response(self, response: str, original_query: str, context: Optional[str] = None) -> GuardrailsValidationResult:
         """
-        Validate agent response for accuracy, safety, and quality
+        Validate agent response for accuracy, safety, and quality using basic validation
         
         Args:
             response: The agent's response
@@ -94,49 +106,63 @@ class GuardrailsService:
         Returns:
             GuardrailsValidationResult with validation details
         """
-        if not self.config.response_validation_enabled:
+        if not self.enable_guardrails:
             return GuardrailsValidationResult(
                 is_valid=True,
                 violations=[],
                 validation_type="response_validation"
             )
         
-        try:
-            payload = {
-                "text": response,
-                "validation_type": "response_quality",
-                "context": context or "Product knowledge chatbot response",
-                "original_query": original_query,
-                "checks": self.config.response_checks
-            }
-            
-            response_api = requests.post(
-                f"{self.base_url}/validate",
-                headers=self.headers,
-                json=payload,
-                timeout=10
-            )
-            
-            if response_api.status_code == 200:
-                data = response_api.json()
-                return self._parse_validation_response(data, "response_validation")
-            else:
-                return GuardrailsValidationResult(
-                    is_valid=False,
-                    violations=[{"error": f"API error: {response_api.status_code}"}],
-                    validation_type="response_validation"
-                )
-                
-        except Exception as e:
-            return GuardrailsValidationResult(
-                is_valid=False,
-                violations=[{"error": f"Validation failed: {str(e)}"}],
-                validation_type="response_validation"
-            )
+        violations = []
+        
+        # Check for toxic language in response
+        if self.toxic_regex.search(response):
+            violations.append({
+                "type": "toxic_language",
+                "error": "Response contains inappropriate language",
+                "details": "Toxic language detected in response"
+            })
+        
+        # Check for competitor mentions in response
+        for competitor in self.competitor_names:
+            if competitor.lower() in response.lower():
+                violations.append({
+                    "type": "competitor_mention",
+                    "error": f"Response mentions competitor: {competitor}",
+                    "details": f"Competitor '{competitor}' mentioned in response"
+                })
+                break
+        
+        # Check for potential harmful content
+        harmful_patterns = [
+            r'\b(how\s+to\s+make\s+bomb)\b',
+            r'\b(how\s+to\s+kill)\b',
+            r'\b(how\s+to\s+commit\s+suicide)\b',
+            r'\b(how\s+to\s+hack)\b'
+        ]
+        
+        for pattern in harmful_patterns:
+            if re.search(pattern, response, re.IGNORECASE):
+                violations.append({
+                    "type": "harmful_content",
+                    "error": "Response contains harmful instructions",
+                    "details": "Harmful content detected in response"
+                })
+                break
+        
+        is_valid = len(violations) == 0
+        confidence_score = 1.0 if is_valid else 0.0
+        
+        return GuardrailsValidationResult(
+            is_valid=is_valid,
+            violations=violations,
+            confidence_score=confidence_score,
+            validation_type="response_validation"
+        )
 
     def validate_multimodal_input(self, text: str, image_description: Optional[str] = None) -> GuardrailsValidationResult:
         """
-        Validate multimodal input (text + image description)
+        Validate multimodal input (text + image description) using basic validation
         
         Args:
             text: The text input
@@ -145,63 +171,53 @@ class GuardrailsService:
         Returns:
             GuardrailsValidationResult with validation details
         """
-        if not self.config.multimodal_validation_enabled:
+        if not self.enable_guardrails:
             return GuardrailsValidationResult(
                 is_valid=True,
                 violations=[],
                 validation_type="multimodal_validation"
             )
         
-        try:
-            # Combine text and image description for validation
-            full_input = text
-            if image_description:
-                full_input = f"{text}\n\nImage content: {image_description}"
-            
-            payload = {
-                "text": full_input,
-                "validation_type": "multimodal_input",
-                "context": "Product knowledge chatbot with image analysis",
-                "checks": self.config.multimodal_checks
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/validate",
-                headers=self.headers,
-                json=payload,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return self._parse_validation_response(data, "multimodal_validation")
-            else:
-                return GuardrailsValidationResult(
-                    is_valid=False,
-                    violations=[{"error": f"API error: {response.status_code}"}],
-                    validation_type="multimodal_validation"
-                )
-                
-        except Exception as e:
-            return GuardrailsValidationResult(
-                is_valid=False,
-                violations=[{"error": f"Validation failed: {str(e)}"}],
-                validation_type="multimodal_validation"
-            )
-
-    def _parse_validation_response(self, data: Dict[str, Any], validation_type: str) -> GuardrailsValidationResult:
-        """Parse the validation response from Guardrails API"""
-        is_valid = data.get("is_valid", True)
-        violations = data.get("violations", [])
-        corrected_input = data.get("corrected_text")
-        confidence_score = data.get("confidence_score", 0.0)
+        # Combine text and image description for validation
+        full_input = text
+        if image_description:
+            full_input = f"{text}\n\nImage content: {image_description}"
+        
+        violations = []
+        
+        # Check for toxic language in combined input
+        if self.toxic_regex.search(full_input):
+            violations.append({
+                "type": "toxic_language",
+                "error": "Multimodal content contains inappropriate language",
+                "details": "Toxic language detected in text or image description"
+            })
+        
+        # Check for inappropriate image content
+        inappropriate_image_patterns = [
+            r'\b(nude|naked|sexual|porn)\b',
+            r'\b(violence|blood|gore)\b',
+            r'\b(weapon|gun|knife)\b'
+        ]
+        
+        if image_description:
+            for pattern in inappropriate_image_patterns:
+                if re.search(pattern, image_description, re.IGNORECASE):
+                    violations.append({
+                        "type": "inappropriate_image",
+                        "error": "Image description contains inappropriate content",
+                        "details": "Inappropriate image content detected"
+                    })
+                    break
+        
+        is_valid = len(violations) == 0
+        confidence_score = 1.0 if is_valid else 0.0
         
         return GuardrailsValidationResult(
             is_valid=is_valid,
             violations=violations,
-            corrected_input=corrected_input,
             confidence_score=confidence_score,
-            validation_type=validation_type
+            validation_type="multimodal_validation"
         )
     
     def get_validation_summary(self, result: GuardrailsValidationResult) -> Dict[str, Any]:

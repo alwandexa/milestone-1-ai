@@ -52,7 +52,7 @@ class LangGraphChat:
         self.guardrails_service = None
         if self.enable_guardrails:
             try:
-                self.guardrails_service = GuardrailsService()
+                self.guardrails_service = GuardrailsService(enable_guardrails=self.enable_guardrails)
             except Exception as e:
                 print(f"⚠️ Warning: Guardrails service initialization failed: {e}")
                 self.enable_guardrails = False
