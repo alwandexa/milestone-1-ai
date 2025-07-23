@@ -4,11 +4,13 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from src.domain.document import ProductGroup, DocumentQuery, DocumentResponse, DocumentChunk
 from src.infrastructure.openai_service import OpenAIService
 from src.agents.supervisor_agent import SupervisorAgent
 from src.agents.product_identifier_agent import ProductIdentifierAgent
 from src.agents.rag_agent import RAGAgent
+from src.infrastructure.langsmith_setup import get_tracer
 import json
 
 # Define the state schema for LangGraph
@@ -51,20 +53,25 @@ class ProductKnowledgeState(TypedDict):
 class LangGraphProductKnowledgeWorkflow:
     """LangGraph-based workflow for product knowledge queries using individual agents"""
     
-    def __init__(self, openai_service: OpenAIService, document_usecase=None):
+    def __init__(self, openai_service: OpenAIService, document_usecase=None, enable_guardrails: bool = True):
         self.openai_service = openai_service
         self.document_usecase = document_usecase
+        self.enable_guardrails = enable_guardrails
         
-        # Initialize individual agents
-        self.supervisor_agent = SupervisorAgent(openai_service)
-        self.product_identifier_agent = ProductIdentifierAgent(openai_service)
-        self.rag_agent = RAGAgent(openai_service, document_usecase)
+        # Setup LangSmith tracing
+        self.tracer = get_tracer()
         
-        # Initialize LLM for response generation
+        # Initialize individual agents with Guardrails
+        self.supervisor_agent = SupervisorAgent(openai_service, enable_guardrails)
+        self.product_identifier_agent = ProductIdentifierAgent(openai_service, enable_guardrails)
+        self.rag_agent = RAGAgent(openai_service, document_usecase, enable_guardrails)
+        
+        # Initialize LLM for response generation with tracing
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.1,
-            api_key=openai_service.api_key
+            api_key=openai_service.api_key,
+            callbacks=[self.tracer] if self.tracer else None,
         )
         
         # Create memory first
@@ -74,37 +81,73 @@ class LangGraphProductKnowledgeWorkflow:
         self.graph = self._create_graph()
     
     def _create_graph(self) -> StateGraph:
-        """Create the LangGraph workflow using individual agents"""
+        """Create the LangGraph workflow using individual agents with proper tracing"""
         
         # Define the state schema
         workflow = StateGraph(ProductKnowledgeState)
         
-        # Add nodes using individual agents
-        workflow.add_node("supervisor_agent", self._supervisor_node)
-        workflow.add_node("product_identifier_agent", self._product_identifier_node)
-        workflow.add_node("rag_agent", self._rag_node)
-        workflow.add_node("response_generator", self._response_generator)
-        workflow.add_node("error_handler", self._error_handler)
+        # Create properly traced nodes
+        supervisor_node = RunnableLambda(
+            self._supervisor_node, 
+            name="supervisor_agent"
+        )
         
-        # Define edges with conditional routing
+        product_identifier_node = RunnableLambda(
+            self._product_identifier_node, 
+            name="product_identifier_agent"
+        )
+        
+        rag_node = RunnableLambda(
+            self._rag_node, 
+            name="rag_agent"
+        )
+        
+        response_generator_node = RunnableLambda(
+            self._response_generator, 
+            name="response_generator"
+        )
+        
+        error_handler_node = RunnableLambda(
+            self._error_handler, 
+            name="error_handler"
+        )
+        
+        # Add nodes to the workflow
+        workflow.add_node("supervisor_agent", supervisor_node)
+        workflow.add_node("product_identifier_agent", product_identifier_node)
+        workflow.add_node("rag_agent", rag_node)
+        workflow.add_node("response_generator", response_generator_node)
+        workflow.add_node("error_handler", error_handler_node)
+        
+        # Define conditional edges with proper routing
         workflow.add_conditional_edges(
             "supervisor_agent",
-            self._should_continue_or_error,
-            {"product_identifier_agent": "product_identifier_agent", "error_handler": "error_handler"}
+            RunnableLambda(self._should_continue_or_error, name="should_continue_or_error"),
+            {
+                "product_identifier_agent": "product_identifier_agent", 
+                "error_handler": "error_handler"
+            }
         )
         
         workflow.add_conditional_edges(
             "product_identifier_agent",
-            self._should_continue_or_error,
-            {"rag_agent": "rag_agent", "error_handler": "error_handler"}
+            RunnableLambda(self._should_continue_or_error, name="should_continue_or_error"),
+            {
+                "rag_agent": "rag_agent", 
+                "error_handler": "error_handler"
+            }
         )
         
         workflow.add_conditional_edges(
             "rag_agent",
-            self._should_continue_or_error,
-            {"response_generator": "response_generator", "error_handler": "error_handler"}
+            RunnableLambda(self._should_continue_or_error, name="should_continue_or_error"),
+            {
+                "response_generator": "response_generator", 
+                "error_handler": "error_handler"
+            }
         )
         
+        # Add final edges
         workflow.add_edge("response_generator", END)
         workflow.add_edge("error_handler", END)
         
@@ -115,9 +158,26 @@ class LangGraphProductKnowledgeWorkflow:
         return workflow.compile(checkpointer=self.memory)
     
     async def _supervisor_node(self, state: ProductKnowledgeState) -> ProductKnowledgeState:
-        """Supervisor node using the SupervisorAgent"""
+        """Supervisor node using the SupervisorAgent with proper tracing"""
         try:
+            # Initialize workflow logs if not present
+            if "workflow_logs" not in state:
+                state["workflow_logs"] = []
+            
             state["current_step"] = "supervisor_analysis"
+            
+            # Add tracing metadata
+            state["workflow_logs"].append({
+                "step": "supervisor_analysis",
+                "agent": "Supervisor",
+                "status": "started",
+                "metadata": {
+                    "node_name": "supervisor_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails
+                }
+            })
+            
             self._log_workflow_step("Starting supervisor analysis", state)
             
             # Execute supervisor agent
@@ -126,18 +186,55 @@ class LangGraphProductKnowledgeWorkflow:
             # Update state with supervisor results
             state.update(updated_state)
             
+            # Update tracing metadata
+            state["workflow_logs"].append({
+                "step": "supervisor_analysis",
+                "agent": "Supervisor",
+                "status": "completed",
+                "metadata": {
+                    "node_name": "supervisor_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "supervisor_analysis": state.get("supervisor_analysis", {})
+                }
+            })
+            
             self._log_workflow_step("Supervisor analysis completed", state)
             
         except Exception as e:
             state["error"] = f"Supervisor agent error: {str(e)}"
+            state["workflow_logs"].append({
+                "step": "supervisor_analysis",
+                "agent": "Supervisor",
+                "status": "error",
+                "metadata": {
+                    "node_name": "supervisor_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "error": str(e)
+                }
+            })
             self._log_workflow_step(f"Supervisor agent failed: {str(e)}", state)
         
         return state
     
     async def _product_identifier_node(self, state: ProductKnowledgeState) -> ProductKnowledgeState:
-        """Product identifier node using the ProductIdentifierAgent"""
+        """Product identifier node using the ProductIdentifierAgent with proper tracing"""
         try:
             state["current_step"] = "product_identification"
+            
+            # Add tracing metadata
+            state["workflow_logs"].append({
+                "step": "product_identification",
+                "agent": "ProductIdentifier",
+                "status": "started",
+                "metadata": {
+                    "node_name": "product_identifier_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails
+                }
+            })
+            
             self._log_workflow_step("Starting product identification", state)
             
             # Execute product identifier agent
@@ -146,18 +243,55 @@ class LangGraphProductKnowledgeWorkflow:
             # Update state with product identification results
             state.update(updated_state)
             
+            # Update tracing metadata
+            state["workflow_logs"].append({
+                "step": "product_identification",
+                "agent": "ProductIdentifier",
+                "status": "completed",
+                "metadata": {
+                    "node_name": "product_identifier_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "product_identification": state.get("product_identification", {})
+                }
+            })
+            
             self._log_workflow_step("Product identification completed", state)
             
         except Exception as e:
             state["error"] = f"Product identifier agent error: {str(e)}"
+            state["workflow_logs"].append({
+                "step": "product_identification",
+                "agent": "ProductIdentifier",
+                "status": "error",
+                "metadata": {
+                    "node_name": "product_identifier_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "error": str(e)
+                }
+            })
             self._log_workflow_step(f"Product identifier agent failed: {str(e)}", state)
         
         return state
     
     async def _rag_node(self, state: ProductKnowledgeState) -> ProductKnowledgeState:
-        """RAG node using the RAGAgent"""
+        """RAG node using the RAGAgent with proper tracing"""
         try:
             state["current_step"] = "rag_processing"
+            
+            # Add tracing metadata
+            state["workflow_logs"].append({
+                "step": "rag_processing",
+                "agent": "RAG",
+                "status": "started",
+                "metadata": {
+                    "node_name": "rag_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails
+                }
+            })
+            
             self._log_workflow_step("Starting RAG process", state)
             
             # Execute RAG agent
@@ -166,10 +300,35 @@ class LangGraphProductKnowledgeWorkflow:
             # Update state with RAG results
             state.update(updated_state)
             
+            # Update tracing metadata
+            state["workflow_logs"].append({
+                "step": "rag_processing",
+                "agent": "RAG",
+                "status": "completed",
+                "metadata": {
+                    "node_name": "rag_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "chunks_retrieved": len(state.get("retrieved_chunks", [])),
+                    "sources_count": len(state.get("sources", []))
+                }
+            })
+            
             self._log_workflow_step(f"RAG completed with {len(state.get('retrieved_chunks', []))} chunks retrieved", state)
             
         except Exception as e:
             state["error"] = f"RAG agent error: {str(e)}"
+            state["workflow_logs"].append({
+                "step": "rag_processing",
+                "agent": "RAG",
+                "status": "error",
+                "metadata": {
+                    "node_name": "rag_agent",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "error": str(e)
+                }
+            })
             self._log_workflow_step(f"RAG agent failed: {str(e)}", state)
         
         return state
@@ -178,6 +337,19 @@ class LangGraphProductKnowledgeWorkflow:
         """Generate final response with confidence score and suggestions"""
         try:
             state["current_step"] = "response_generation"
+            
+            # Add tracing metadata
+            state["workflow_logs"].append({
+                "step": "response_generation",
+                "agent": "ResponseGenerator",
+                "status": "started",
+                "metadata": {
+                    "node_name": "response_generator",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails
+                }
+            })
+            
             self._log_workflow_step("Generating final response", state)
             
             # Calculate confidence score
@@ -190,17 +362,55 @@ class LangGraphProductKnowledgeWorkflow:
             state["confidence_score"] = confidence_score
             state["suggested_follow_up"] = suggested_follow_up
             
+            # Update tracing metadata
+            state["workflow_logs"].append({
+                "step": "response_generation",
+                "agent": "ResponseGenerator",
+                "status": "completed",
+                "metadata": {
+                    "node_name": "response_generator",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "confidence_score": confidence_score
+                }
+            })
+            
             self._log_workflow_step("Final response generated successfully", state)
             
         except Exception as e:
             state["error"] = f"Response generator error: {str(e)}"
+            state["workflow_logs"].append({
+                "step": "response_generation",
+                "agent": "ResponseGenerator",
+                "status": "error",
+                "metadata": {
+                    "node_name": "response_generator",
+                    "tracing_enabled": True,
+                    "guardrails_enabled": self.enable_guardrails,
+                    "error": str(e)
+                }
+            })
             self._log_workflow_step(f"Response generator failed: {str(e)}", state)
         
         return state
     
     def _error_handler(self, state: ProductKnowledgeState) -> ProductKnowledgeState:
-        """Handle errors in the workflow"""
+        """Handle errors in the workflow with proper tracing"""
         error = state.get("error", "Unknown error")
+        
+        # Add tracing metadata
+        state["workflow_logs"].append({
+            "step": "error_handling",
+            "agent": "ErrorHandler",
+            "status": "started",
+            "metadata": {
+                "node_name": "error_handler",
+                "tracing_enabled": True,
+                "guardrails_enabled": self.enable_guardrails,
+                "error": error
+            }
+        })
+        
         self._log_workflow_step(f"Error handler processing: {error}", state)
         
         # Set default values for error case
@@ -208,6 +418,19 @@ class LangGraphProductKnowledgeWorkflow:
         state["sources"] = []
         state["confidence_score"] = 0.0
         state["suggested_follow_up"] = "Please try asking your question again with different wording."
+        
+        # Update tracing metadata
+        state["workflow_logs"].append({
+            "step": "error_handling",
+            "agent": "ErrorHandler",
+            "status": "completed",
+            "metadata": {
+                "node_name": "error_handler",
+                "tracing_enabled": True,
+                "guardrails_enabled": self.enable_guardrails,
+                "error": error
+            }
+        })
         
         return state
     
@@ -277,7 +500,7 @@ class LangGraphProductKnowledgeWorkflow:
         state["workflow_logs"].append(f"[LangGraphWorkflow] {message}")
     
     async def execute_workflow(self, query: DocumentQuery) -> DocumentResponse:
-        """Execute the LangGraph workflow"""
+        """Execute the LangGraph workflow with proper tracing"""
         
         # Initialize state
         initial_state = {
@@ -290,12 +513,14 @@ class LangGraphProductKnowledgeWorkflow:
         }
         
         try:
-            # Execute the graph
+            # Execute the graph with proper tracing
             config = {"configurable": {"thread_id": query.session_id or "default"}}
-            result = await self.graph.ainvoke(initial_state, config)
             
-            # Extract final state
-            final_state = result.get("supervisor_agent", result)
+            # Use invoke instead of ainvoke for better tracing
+            result = self.graph.invoke(initial_state, config)
+            
+            # The result should be the final state directly
+            final_state = result
             
             # Determine product group from state
             product_group = None
@@ -313,6 +538,10 @@ class LangGraphProductKnowledgeWorkflow:
                 confidence_score=final_state.get("confidence_score", 0.0),
                 suggested_follow_up=final_state.get("suggested_follow_up")
             )
+            
+            # Add workflow logs to response if available
+            if hasattr(response, 'workflow_logs'):
+                response.workflow_logs = final_state.get("workflow_logs", [])
             
             return response
             

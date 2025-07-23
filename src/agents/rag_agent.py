@@ -7,8 +7,8 @@ from src.domain.document import ProductGroup, DocumentChunk
 class RAGAgent(BaseAgent):
     """Agent responsible for retrieving and generating answers from product knowledge"""
     
-    def __init__(self, openai_service: OpenAIService, document_usecase=None):
-        super().__init__(openai_service, "RAG")
+    def __init__(self, openai_service: OpenAIService, document_usecase=None, enable_guardrails: bool = True):
+        super().__init__(openai_service, "RAG", enable_guardrails)
         self.document_usecase = document_usecase
         
         self.rag_prompt = ChatPromptTemplate.from_template("""
@@ -37,6 +37,15 @@ Generate a comprehensive response that would be helpful for a sales representati
         query = state.get("query", "")
         product_groups = state.get("identified_product_groups", [])
         specific_products = state.get("specific_products", [])
+        
+        # Validate input using Guardrails
+        input_validation = self.validate_input(query, "RAG agent input validation")
+        state["rag_input_validation"] = input_validation
+        
+        if not input_validation["is_valid"] and input_validation.get("corrected_input"):
+            query = input_validation["corrected_input"]
+            state["query"] = query
+            self.log(f"Input corrected due to validation: {query}", state)
         
         # Build search query with product context
         search_query = self._build_search_query(query, product_groups, specific_products)
@@ -75,12 +84,38 @@ Generate a comprehensive response that would be helpful for a sales representati
         )
         
         response = await self.llm.ainvoke(messages)
+        response_text = response.content
+        
+        # Validate output using Guardrails
+        output_validation = self.validate_output(response_text, query)
+        state["rag_output_validation"] = output_validation
+        
+        if not output_validation["is_valid"]:
+            self.log("RAG output validation failed, using fallback", state)
+            response_text = "I apologize, but I cannot provide that information as it may violate safety guidelines. Please try rephrasing your question or ask about a different topic."
         
         # Update state with RAG results
         state["retrieved_chunks"] = chunks
         state["context"] = context
-        state["answer"] = response.content
+        state["answer"] = response_text
         state["sources"] = [chunk.document_id for chunk in chunks if hasattr(chunk, 'document_id')]
+        
+        # Add tracing metadata
+        state["current_step"] = "rag_generation"
+        state["workflow_logs"] = state.get("workflow_logs", [])
+        state["workflow_logs"].append({
+            "step": "rag_generation",
+            "agent": "RAG",
+            "status": "completed",
+            "metadata": {
+                "node_name": "rag_agent",
+                "tracing_enabled": True,
+                "guardrails_enabled": self.enable_guardrails,
+                "input_validation": input_validation,
+                "output_validation": output_validation,
+                "chunks_retrieved": len(chunks)
+            }
+        })
         
         self.log(f"RAG completed with {len(chunks)} chunks retrieved", state)
         

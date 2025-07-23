@@ -21,8 +21,8 @@ def setup_dependencies():
     # Initialize usecase
     document_usecase = DocumentUsecase(repository, document_processor, openai_service)
     
-    # Initialize LangGraph chat with document usecase
-    langgraph_chat = LangGraphChat(openai_service, document_usecase)
+    # Initialize LangGraph chat with document usecase and Guardrails
+    langgraph_chat = LangGraphChat(openai_service, document_usecase, enable_guardrails=True)
     
     # Set the dependencies in the controller
     from src.controller.document_controller import set_dependencies
@@ -36,9 +36,11 @@ if __name__ == "__main__":
     
     print("🚀 Starting iScaps Product Knowledge API...")
     print("📚 Product Knowledge System with Agentic Workflow")
+    print("🛡️ Guardrails AI: Enabled" if langgraph_chat.enable_guardrails else "🛡️ Guardrails AI: Disabled")
     print("🔗 API available at: http://localhost:8000")
     print("📖 API documentation at: http://localhost:8000/docs")
     print("💊 Streamlit app available at: http://localhost:8501")
+    print("📊 LangSmith tracing: Enabled")
     print("---")
     
     # Start the server
