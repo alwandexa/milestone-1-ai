@@ -10,7 +10,7 @@ package-mode = false
 
 
 [tool.poetry.dependencies]
-python = ">=3.9,<3.9.7 || >3.9.7,<4.0"
+python = ">3.9.7,<4.0"
 streamlit = "^1.47.0"
 fastapi = "^0.104.1"
 uvicorn = "^0.24.0"
@@ -28,6 +28,7 @@ langsmith = "^0.3.45"
 pymupdf = "^1.26.3"
 pillow = "^11.3.0"
 requests = "^2.32.4"
+guardrails-ai = "^0.6.6"
 
 
 [build-system]
