@@ -26,6 +26,7 @@ class ChatState(TypedDict):
     image_data: Optional[bytes]
     multimodal_content: bool
     extracted_text: Optional[str]
+    chain_of_thought: List[Dict[str, Any]]  # Track agent reasoning steps
 
 
 class LangGraphChat:
@@ -96,6 +97,18 @@ class LangGraphChat:
         query = state["query"]
         image_data = state.get("image_data")
         
+        # Initialize chain of thought
+        if "chain_of_thought" not in state:
+            state["chain_of_thought"] = []
+        
+        # Add reasoning step
+        state["chain_of_thought"].append({
+            "step": "multimodal_processing",
+            "agent": "Input Processor",
+            "thought": f"Processing user query: '{query}'",
+            "status": "started"
+        })
+        
         if image_data:
             # Extract text from image if present
             try:
@@ -106,13 +119,37 @@ class LangGraphChat:
                 combined_query = f"{query}\n\nExtracted text from image: {extracted_text}"
                 state["query"] = combined_query
                 state["multimodal_content"] = True
+                
+                # Update chain of thought
+                state["chain_of_thought"].append({
+                    "step": "image_analysis",
+                    "agent": "Image Analyzer",
+                    "thought": f"Extracted text from image: {extracted_text[:100]}...",
+                    "status": "completed"
+                })
             except Exception as e:
                 # If image processing fails, continue with original query
                 state["multimodal_content"] = False
                 state["extracted_text"] = None
+                
+                # Update chain of thought with error
+                state["chain_of_thought"].append({
+                    "step": "image_analysis",
+                    "agent": "Image Analyzer",
+                    "thought": f"Failed to extract text from image: {str(e)}",
+                    "status": "error"
+                })
         else:
             state["multimodal_content"] = False
             state["extracted_text"] = None
+            
+            # Update chain of thought
+            state["chain_of_thought"].append({
+                "step": "text_only",
+                "agent": "Input Processor",
+                "thought": "Processing text-only query",
+                "status": "completed"
+            })
         
         return state
 
@@ -120,11 +157,39 @@ class LangGraphChat:
         """Search for relevant document chunks"""
         query = state["query"]
 
+        # Add reasoning step
+        state["chain_of_thought"].append({
+            "step": "document_search",
+            "agent": "Document Retriever",
+            "thought": f"Searching for documents relevant to: '{query[:100]}...'",
+            "status": "started"
+        })
+
         # Get search results from document usecase
         if self.document_usecase:
             chunks = self.document_usecase.search_documents(query, top_k=5)
+            
+            # Update chain of thought with results
+            state["chain_of_thought"].append({
+                "step": "document_search",
+                "agent": "Document Retriever",
+                "thought": f"Found {len(chunks)} relevant document chunks",
+                "status": "completed",
+                "details": {
+                    "chunks_found": len(chunks),
+                    "search_query": query[:100]
+                }
+            })
         else:
             chunks = []  # Fallback if no document usecase
+            
+            # Update chain of thought with no results
+            state["chain_of_thought"].append({
+                "step": "document_search",
+                "agent": "Document Retriever",
+                "thought": "No document usecase available, using fallback",
+                "status": "warning"
+            })
 
         state["search_results"] = chunks
         state["search_count"] = state.get("search_count", 0) + 1
@@ -136,8 +201,28 @@ class LangGraphChat:
         query = state["query"]
         search_results = state["search_results"]
 
+        # Add reasoning step
+        state["chain_of_thought"].append({
+            "step": "evaluate_results",
+            "agent": "Result Evaluator",
+            "thought": f"Evaluating {len(search_results)} search results for relevance",
+            "status": "started"
+        })
+
         if not search_results:
             state["has_answer"] = False
+            
+            # Update chain of thought with no results
+            state["chain_of_thought"].append({
+                "step": "evaluate_results",
+                "agent": "Result Evaluator",
+                "thought": "No search results found, cannot answer the question",
+                "status": "completed",
+                "details": {
+                    "has_answer": False,
+                    "reason": "no_search_results"
+                }
+            })
             return state
 
         # Create context from search results
@@ -162,6 +247,19 @@ class LangGraphChat:
         result_text = str(result.content) if hasattr(result, "content") else str(result)
         state["has_answer"] = "YES" in result_text.upper()
         state["context"] = context
+
+        # Update chain of thought with evaluation result
+        state["chain_of_thought"].append({
+            "step": "evaluate_results",
+            "agent": "Result Evaluator",
+            "thought": f"Evaluation result: {'Sufficient information found' if state['has_answer'] else 'Insufficient information'}",
+            "status": "completed",
+            "details": {
+                "has_answer": state["has_answer"],
+                "evaluation_response": result_text,
+                "context_length": len(context)
+            }
+        })
 
         return state
 
@@ -210,10 +308,35 @@ class LangGraphChat:
         image_data = state.get("image_data")
         multimodal_content = state.get("multimodal_content", False)
 
+        # Add reasoning step
+        state["chain_of_thought"].append({
+            "step": "generate_answer",
+            "agent": "Answer Generator",
+            "thought": f"Generating answer for: '{query[:100]}...'",
+            "status": "started",
+            "details": {
+                "multimodal": multimodal_content,
+                "has_context": bool(context),
+                "search_results_count": len(search_results)
+            }
+        })
+
         if not context and not multimodal_content:
             state["answer"] = (
                 "I couldn't find relevant information to answer your question."
             )
+            
+            # Update chain of thought with no answer
+            state["chain_of_thought"].append({
+                "step": "generate_answer",
+                "agent": "Answer Generator",
+                "thought": "No context or multimodal content available, providing fallback response",
+                "status": "completed",
+                "details": {
+                    "answer_generated": False,
+                    "reason": "no_context_or_multimodal"
+                }
+            })
             return state
 
         if multimodal_content and image_data:
@@ -226,6 +349,18 @@ class LangGraphChat:
                     prompt="Based on the provided document context and image, please answer the user's question. If the image contains relevant information, incorporate it into your response."
                 )
                 state["answer"] = answer
+                
+                # Update chain of thought with multimodal answer
+                state["chain_of_thought"].append({
+                    "step": "generate_answer",
+                    "agent": "Answer Generator",
+                    "thought": "Generated answer using multimodal analysis (text + image)",
+                    "status": "completed",
+                    "details": {
+                        "method": "multimodal",
+                        "answer_length": len(answer)
+                    }
+                })
             except Exception as e:
                 # Fallback to text-only analysis
                 answer_prompt = ChatPromptTemplate.from_template(
@@ -242,6 +377,19 @@ class LangGraphChat:
                 result = chain.invoke({"query": query, "context": context})
                 result_text = str(result.content) if hasattr(result, "content") else str(result)
                 state["answer"] = result_text
+                
+                # Update chain of thought with fallback
+                state["chain_of_thought"].append({
+                    "step": "generate_answer",
+                    "agent": "Answer Generator",
+                    "thought": f"Multimodal analysis failed, using text-only fallback: {str(e)}",
+                    "status": "completed",
+                    "details": {
+                        "method": "text_only_fallback",
+                        "error": str(e),
+                        "answer_length": len(result_text)
+                    }
+                })
         else:
             # Text-only analysis
             answer_prompt = ChatPromptTemplate.from_template(
@@ -258,6 +406,18 @@ class LangGraphChat:
             result = chain.invoke({"query": query, "context": context})
             result_text = str(result.content) if hasattr(result, "content") else str(result)
             state["answer"] = result_text
+            
+            # Update chain of thought with text-only answer
+            state["chain_of_thought"].append({
+                "step": "generate_answer",
+                "agent": "Answer Generator",
+                "thought": "Generated answer using text-only analysis",
+                "status": "completed",
+                "details": {
+                    "method": "text_only",
+                    "answer_length": len(result_text)
+                }
+            })
 
         state["sources"] = [chunk.document_id for chunk in search_results]
 
@@ -284,6 +444,7 @@ class LangGraphChat:
             image_data=image_data,
             multimodal_content=False,
             extracted_text=None,
+            chain_of_thought=[],
         )
         
         # Run the graph
@@ -319,6 +480,7 @@ class LangGraphChat:
             image_data=image_data,
             multimodal_content=False,
             extracted_text=None,
+            chain_of_thought=[],
         )
         
         # Process multimodal input first
@@ -349,13 +511,14 @@ class LangGraphChat:
             }
             return
 
-        # Send initial metadata
+        # Send initial metadata with chain of thought
         yield {
             "type": "metadata",
             "sources": [chunk.document_id for chunk in search_results],
             "search_count": state.get("search_count", 0),
             "multimodal_content": multimodal_content,
-            "extracted_text": state.get("extracted_text")
+            "extracted_text": state.get("extracted_text"),
+            "chain_of_thought": state.get("chain_of_thought", [])
         }
 
         if multimodal_content and image_data:

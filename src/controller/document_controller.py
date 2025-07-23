@@ -28,6 +28,7 @@ class MultimodalChatResponse(BaseModel):
     context: str
     multimodal_content: bool
     extracted_text: Optional[str] = None
+    chain_of_thought: List[Dict[str, Any]] = []
 
 class DocumentResponse(BaseModel):
     id: str
@@ -122,7 +123,8 @@ async def chat_with_documents(
             search_count=result["search_count"],
             context=result["context"],
             multimodal_content=result.get("multimodal_content", False),
-            extracted_text=result.get("extracted_text")
+            extracted_text=result.get("extracted_text"),
+            chain_of_thought=result.get("chain_of_thought", [])
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
