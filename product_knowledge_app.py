@@ -152,10 +152,17 @@ st.markdown("""
     }
 
     .message-image {
-        max-width: 300px;
+        max-width: 250px;
         border-radius: 8px;
         margin: 0.5rem 0;
-        border: 2px solid #3b82f6;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .message-image-container {
+        margin-top: 0.5rem;
+        display: flex;
+        justify-content: flex-end;
     }
 
     /* Modern chat layout styling */
@@ -535,19 +542,34 @@ def main():
     # Display chat messages using custom styling
     for message in st.session_state.messages:
         if message["role"] == "user":
-            st.markdown(f"""
-            <div class="message-container">
-                <div class="user-message">
-                    <div class="message-bubble user-bubble">
-                        {message["content"]}
+            # Check if message has image
+            has_image = "image_base64" in message
+            
+            if has_image:
+                # User message with image - display both text and image together
+                st.markdown(f"""
+                <div class="message-container">
+                    <div class="user-message">
+                        <div class="message-bubble user-bubble">
+                            {message["content"]}
+                            <div class="message-image-container">
+                                <img src="data:image/jpeg;base64,{message['image_base64']}" class="message-image" alt="Attached image">
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Display image if present
-            if "image" in message:
-                st.image(message["image"], caption="Attached Image", width=300)
+                """, unsafe_allow_html=True)
+            else:
+                # User message without image
+                st.markdown(f"""
+                <div class="message-container">
+                    <div class="user-message">
+                        <div class="message-bubble user-bubble">
+                            {message["content"]}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
             <div class="message-container">
@@ -614,7 +636,12 @@ def main():
         # Add user message
         message_data = {"role": "user", "content": current_query}
         if uploaded_image:
-            message_data["image"] = uploaded_image
+            # Convert image to base64 for inline display
+            import base64
+            image_bytes = uploaded_image.read()
+            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            message_data["image_base64"] = image_base64
+            uploaded_image.seek(0)  # Reset file pointer for API call
             # Only add image if there's also a text prompt
             if not current_query:
                 st.error("Please provide a question along with the image.")
