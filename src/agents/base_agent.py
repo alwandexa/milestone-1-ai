@@ -70,12 +70,12 @@ class BaseAgent(ABC):
             }
         
         try:
-            result = self.guardrails_service.validate_user_input(input_text, context)
+            result = self.guardrails_service.validate_user_input(input_text)
             return {
-                "is_valid": result.is_valid,
-                "violations": result.violations,
-                "confidence_score": result.confidence_score,
-                "corrected_input": result.corrected_input,
+                "is_valid": result["valid"],
+                "violations": result["errors"],
+                "confidence_score": 1.0 if result["valid"] else 0.0,
+                "corrected_input": None,
                 "disabled": False
             }
         except Exception as e:
@@ -98,12 +98,12 @@ class BaseAgent(ABC):
             }
         
         try:
-            result = self.guardrails_service.validate_agent_response(output_text, original_input)
+            result = self.guardrails_service.validate_agent_response(output_text)
             return {
-                "is_valid": result.is_valid,
-                "violations": result.violations,
-                "confidence_score": result.confidence_score,
-                "corrected_output": result.corrected_input,
+                "is_valid": result["valid"],
+                "violations": result["errors"],
+                "confidence_score": 1.0 if result["valid"] else 0.0,
+                "corrected_output": None,
                 "disabled": False
             }
         except Exception as e:
