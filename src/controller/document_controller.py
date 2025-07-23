@@ -5,10 +5,14 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 from src.usecase.document_usecase import DocumentUsecase
 from src.infrastructure.langgraph_chat import LangGraphChat
 from src.domain.document import Document, ProductGroup, DocumentQuery, DocumentResponse
+from src.controller.dashboard_controller import router as dashboard_router
 import uuid
 import json
 
 app = FastAPI(title="Product Knowledge API", version="1.0.0")
+
+# Include dashboard router
+app.include_router(dashboard_router)
 
 # Pydantic models
 class ChatRequest(BaseModel):
@@ -69,6 +73,9 @@ async def upload_document(
     product_group: Optional[str] = Form(None)
 ):
     """Upload and process a PDF document with optional product group"""
+    import time
+    start_time = time.time()
+    
     if not file.filename or not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
@@ -85,6 +92,25 @@ async def upload_document(
         usecase = get_document_usecase()
         document = usecase.upload_document(content, file.filename, product_group_enum)
         
+        # Calculate processing time
+        processing_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log the document event for monitoring
+        try:
+            from src.controller.dashboard_controller import get_monitoring_service
+            monitoring_service = get_monitoring_service()
+            
+            monitoring_service.log_document_event(
+                filename=file.filename,
+                file_size=len(content),
+                chunk_count=len(document.chunks),
+                processing_time_ms=processing_time_ms,
+                product_group=document.product_group.value if document.product_group else None
+            )
+        except Exception as monitoring_error:
+            # Don't fail the main request if monitoring fails
+            print(f"Monitoring error: {monitoring_error}")
+        
         return DocumentResponse(
             id=document.id,
             filename=document.filename,
@@ -93,6 +119,19 @@ async def upload_document(
             product_group=document.product_group.value if document.product_group else None
         )
     except Exception as e:
+        # Log error event
+        try:
+            from src.controller.dashboard_controller import get_monitoring_service
+            monitoring_service = get_monitoring_service()
+            monitoring_service.log_system_event(
+                component="document_upload",
+                operation="upload_document",
+                status="failed",
+                error_message=str(e)
+            )
+        except:
+            pass
+        
         raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
 
 @app.post("/chat", response_model=MultimodalChatResponse)
@@ -102,15 +141,21 @@ async def chat_with_documents(
     image: Optional[UploadFile] = File(None)
 ):
     """Unified chat endpoint that works like ChatGPT - supports both text and images"""
+    import time
+    start_time = time.time()
+    
     try:
         chat = get_langgraph_chat()
         
         # Read image data if provided
         image_data = None
+        multimodal = False
+        extracted_text = None
         if image:
             if not image.content_type.startswith('image/'):
                 raise HTTPException(status_code=400, detail="Only image files are supported")
             image_data = await image.read()
+            multimodal = True
         
         # Use LangGraph chat with multimodal support
         result = chat.chat(
@@ -118,6 +163,43 @@ async def chat_with_documents(
             session_id=session_id,
             image_data=image_data
         )
+        
+        # Calculate response time
+        response_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Log the chat event for monitoring
+        try:
+            from src.controller.dashboard_controller import get_monitoring_service
+            monitoring_service = get_monitoring_service()
+            
+            # Extract product group from context if available
+            product_group = None
+            if result.get("context"):
+                # Try to extract product group from context
+                context_lower = result["context"].lower()
+                for group in ProductGroup:
+                    if group.value.lower() in context_lower:
+                        product_group = group.value
+                        break
+            
+            monitoring_service.log_chat_event(
+                query=query,
+                response=result["answer"],
+                session_id=session_id,
+                product_group=product_group,
+                response_time_ms=response_time_ms,
+                token_count=len(result["answer"].split()),  # Approximate token count
+                confidence_score=result.get("confidence_score", 0.5),
+                sources_count=len(result["sources"]),
+                chain_of_thought=result.get("chain_of_thought"),
+                input_validation=result.get("input_validation"),
+                response_validation=result.get("response_validation"),
+                multimodal=multimodal,
+                extracted_text=result.get("extracted_text")
+            )
+        except Exception as monitoring_error:
+            # Don't fail the main request if monitoring fails
+            print(f"Monitoring error: {monitoring_error}")
         
         return MultimodalChatResponse(
             answer=result["answer"],
@@ -129,6 +211,20 @@ async def chat_with_documents(
             chain_of_thought=result.get("chain_of_thought", [])
         )
     except Exception as e:
+        # Log error event
+        try:
+            from src.controller.dashboard_controller import get_monitoring_service
+            monitoring_service = get_monitoring_service()
+            monitoring_service.log_system_event(
+                component="chat",
+                operation="chat_with_documents",
+                status="failed",
+                session_id=session_id,
+                error_message=str(e)
+            )
+        except:
+            pass
+        
         raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
 
 @app.post("/chat/stream")

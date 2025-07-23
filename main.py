@@ -8,6 +8,8 @@ from src.repository.document_milvus_repository import DocumentMilvusRepository
 from src.infrastructure.document_processor import DocumentProcessor
 from src.infrastructure.openai_service import OpenAIService
 from src.infrastructure.langgraph_chat import LangGraphChat
+from src.infrastructure.monitoring_service import MonitoringService
+from src.controller.dashboard_controller import set_monitoring_service
 
 def setup_dependencies():
     """Setup dependency injection for product knowledge system"""
@@ -24,15 +26,19 @@ def setup_dependencies():
     # Initialize LangGraph chat with document usecase and Guardrails
     langgraph_chat = LangGraphChat(openai_service, document_usecase, enable_guardrails=True)
     
-    # Set the dependencies in the controller
+    # Initialize monitoring service
+    monitoring_service = MonitoringService()
+    
+    # Set the dependencies in the controllers
     from src.controller.document_controller import set_dependencies
     set_dependencies(document_usecase, langgraph_chat)
+    set_monitoring_service(monitoring_service)
     
-    return document_usecase, langgraph_chat
+    return document_usecase, langgraph_chat, monitoring_service
 
 if __name__ == "__main__":
     # Setup dependencies
-    document_usecase, langgraph_chat = setup_dependencies()
+    document_usecase, langgraph_chat, monitoring_service = setup_dependencies()
     
     print("🚀 Starting iScaps Product Knowledge API...")
     print("📚 Product Knowledge System with Agentic Workflow")
