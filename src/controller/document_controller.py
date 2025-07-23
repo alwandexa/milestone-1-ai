@@ -1,10 +1,12 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 from src.usecase.document_usecase import DocumentUsecase
 from src.infrastructure.langgraph_chat import LangGraphChat
 from src.domain.document import Document, ProductGroup, DocumentQuery, DocumentResponse
 import uuid
+import json
 
 app = FastAPI(title="Product Knowledge API", version="1.0.0")
 
@@ -124,6 +126,55 @@ async def chat_with_documents(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error in chat: {str(e)}")
+
+@app.post("/chat/stream")
+async def chat_with_documents_stream(
+    query: str = Form(...),
+    session_id: Optional[str] = Form(None),
+    image: Optional[UploadFile] = File(None)
+):
+    """Streaming chat endpoint that works like ChatGPT - supports both text and images"""
+    try:
+        chat = get_langgraph_chat()
+        
+        # Read image data if provided
+        image_data = None
+        if image:
+            if not image.content_type.startswith('image/'):
+                raise HTTPException(status_code=400, detail="Only image files are supported")
+            image_data = await image.read()
+        
+        async def generate_stream() -> AsyncGenerator[str, None]:
+            """Generate streaming response"""
+            try:
+                async for chunk in chat.chat_stream(
+                    query=query,
+                    session_id=session_id,
+                    image_data=image_data
+                ):
+                    # Send each chunk as a Server-Sent Event
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                
+                # Send end marker
+                yield f"data: {json.dumps({'type': 'end'})}\n\n"
+            except Exception as e:
+                error_chunk = {
+                    'type': 'error',
+                    'content': f"Error: {str(e)}"
+                }
+                yield f"data: {json.dumps(error_chunk)}\n\n"
+        
+        return StreamingResponse(
+            generate_stream(),
+            media_type="text/plain",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Content-Type": "text/event-stream",
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error in streaming chat: {str(e)}")
 
 @app.get("/documents", response_model=List[DocumentResponse])
 async def list_documents():

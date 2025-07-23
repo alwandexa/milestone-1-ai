@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, TypedDict, Optional, Union
+from typing import List, Dict, Any, TypedDict, Optional, Union, AsyncGenerator
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -11,6 +11,7 @@ from src.infrastructure.langsmith_setup import setup_langsmith, get_tracer
 import os
 from pydantic import SecretStr
 import base64
+import asyncio
 
 
 class ChatState(TypedDict):
@@ -46,6 +47,15 @@ class LangGraphChat:
             temperature=0.7,
             api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
             callbacks=[self.tracer] if self.tracer else None,
+        )
+        
+        # Initialize streaming LLM
+        self.streaming_llm = ChatOpenAI(
+            model="gpt-4o-mini",
+            temperature=0.7,
+            api_key=SecretStr(os.getenv("OPENAI_API_KEY", "")),
+            callbacks=[self.tracer] if self.tracer else None,
+            streaming=True,
         )
 
         self.memory = MemorySaver()
@@ -287,3 +297,148 @@ class LangGraphChat:
             "multimodal_content": result.get("multimodal_content", False),
             "extracted_text": result.get("extracted_text"),
         }
+
+    async def chat_stream(self, query: str, session_id: Optional[str] = None, image_data: Optional[bytes] = None) -> AsyncGenerator[Dict[str, Any], None]:
+        """Streaming chat with the document-based system with multimodal support"""
+        # Always provide a thread_id for the checkpointer
+        if not session_id:
+            session_id = "default_session"
+
+        config = {"configurable": {"thread_id": session_id}}
+
+        # Initialize state
+        state = ChatState(
+            query=query,
+            original_query=query,
+            search_results=[],
+            search_count=0,
+            has_answer=False,
+            context="",
+            answer="",
+            sources=[],
+            image_data=image_data,
+            multimodal_content=False,
+            extracted_text=None,
+        )
+        
+        # Process multimodal input first
+        state = self._process_multimodal_input(state)
+        
+        # Search documents
+        state = self._search_documents(state)
+        
+        # Evaluate results
+        state = self._evaluate_results(state)
+        
+        # Generate streaming answer
+        async for chunk in self._generate_streaming_answer(state):
+            yield chunk
+
+    async def _generate_streaming_answer(self, state: ChatState) -> AsyncGenerator[Dict[str, Any], None]:
+        """Generate streaming answer based on context and multimodal content"""
+        query = state["original_query"]
+        context = state.get("context", "")
+        search_results = state["search_results"]
+        image_data = state.get("image_data")
+        multimodal_content = state.get("multimodal_content", False)
+
+        if not context and not multimodal_content:
+            yield {
+                "type": "content",
+                "content": "I couldn't find relevant information to answer your question."
+            }
+            return
+
+        # Send initial metadata
+        yield {
+            "type": "metadata",
+            "sources": [chunk.document_id for chunk in search_results],
+            "search_count": state.get("search_count", 0),
+            "multimodal_content": multimodal_content,
+            "extracted_text": state.get("extracted_text")
+        }
+
+        if multimodal_content and image_data:
+            # Use multimodal analysis with streaming
+            try:
+                combined_context = f"Document context: {context}\n\nQuery: {query}"
+                async for chunk in self._stream_multimodal_analysis(
+                    text=combined_context,
+                    image_data=image_data,
+                    prompt="Based on the provided document context and image, please answer the user's question. If the image contains relevant information, incorporate it into your response."
+                ):
+                    yield chunk
+            except Exception as e:
+                # Fallback to text-only streaming analysis
+                async for chunk in self._stream_text_analysis(query, context):
+                    yield chunk
+        else:
+            # Text-only streaming analysis
+            async for chunk in self._stream_text_analysis(query, context):
+                yield chunk
+
+    async def _stream_text_analysis(self, query: str, context: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream text-only analysis"""
+        answer_prompt = ChatPromptTemplate.from_template(
+            """
+        Answer the user's question based on the provided context. If the context doesn't contain enough information, say so.
+        
+        Context: {context}
+        Question: {query}
+        
+        Provide a clear and helpful answer:
+        """
+        )
+        
+        chain = answer_prompt | self.streaming_llm
+        
+        try:
+            async for chunk in chain.astream({"query": query, "context": context}):
+                if hasattr(chunk, 'content') and chunk.content:
+                    yield {
+                        "type": "content",
+                        "content": chunk.content
+                    }
+        except Exception as e:
+            yield {
+                "type": "error",
+                "content": f"Error generating response: {str(e)}"
+            }
+
+    async def _stream_multimodal_analysis(self, text: str, image_data: bytes, prompt: str) -> AsyncGenerator[Dict[str, Any], None]:
+        """Stream multimodal analysis"""
+        try:
+            # Convert image to base64
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            
+            # Create multimodal message
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"{prompt}\n\nText content: {text}"
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{image_base64}"
+                            }
+                        }
+                    ]
+                }
+            ]
+            
+            # Stream the response
+            async for chunk in self.streaming_llm.astream(messages):
+                if hasattr(chunk, 'content') and chunk.content:
+                    yield {
+                        "type": "content",
+                        "content": chunk.content
+                    }
+        except Exception as e:
+            yield {
+                "type": "error",
+                "content": f"Error in multimodal analysis: {str(e)}"
+            }
