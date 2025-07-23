@@ -9,12 +9,21 @@ A comprehensive product knowledge management system with advanced multimodal AI 
 - **Product Knowledge Querying**: Intelligent search and retrieval of product information
 - **Agentic Workflow**: LangGraph-based conversational AI with memory and context
 - **Product Group Organization**: Categorize documents by product groups
+- **📊 Real-time Monitoring**: Comprehensive analytics and performance tracking
 
 ### 🖼️ Multimodal AI Capabilities
 - **Image Analysis**: Analyze images using GPT-4o-mini multimodal capabilities
 - **Text Extraction**: Extract text from images using OCR
 - **Combined Analysis**: Process text and images together for comprehensive insights
 - **Visual Product Recognition**: Identify and analyze product labels, medical images, and documents
+
+### 📈 Monitoring & Analytics
+- **Real-time Metrics**: Track queries, success rates, response times, and token usage
+- **Question Type Analysis**: Monitor what types of questions users ask most frequently
+- **Product Group Analytics**: See which product groups are most popular
+- **Performance Gauges**: Visual indicators for success rates and confidence scores
+- **Daily Activity Charts**: Track system usage over time
+- **Recent Activity Panel**: View latest interactions and system events
 
 ## 🏗️ Architecture
 
@@ -71,17 +80,25 @@ src/
 
 ## 🚀 Running the Application
 
-### Start the API Server
+### Manual Start
+
+#### Start the API Server
 ```bash
 python main.py
 ```
 The API will be available at `http://localhost:8000`
 
-### Start the Streamlit App
+#### Start the Streamlit App
 ```bash
 streamlit run product_knowledge_app.py
 ```
 The web interface will be available at `http://localhost:8501`
+
+### Access Points
+- **Main App**: http://localhost:8501 (Chat + Monitoring Dashboard)
+- **API Documentation**: http://localhost:8000/docs
+- **API Health Check**: http://localhost:8000/health
+- **Dashboard Analytics**: http://localhost:8000/dashboard/analytics
 
 ## 📚 API Endpoints
 
@@ -98,6 +115,15 @@ The web interface will be available at `http://localhost:8501`
 - `POST /chat` - Text-only chat
 - `POST /chat/stream` - **NEW**: Streaming chat with real-time responses
 - `POST /chat/multimodal` - **NEW**: Multimodal chat with images
+
+### 📊 Monitoring Dashboard
+- `GET /dashboard/analytics` - Comprehensive analytics data
+- `GET /dashboard/recent-events` - Recent activity events
+- `GET /dashboard/health` - Dashboard health check
+- `GET /dashboard/stats/summary` - Quick overview metrics
+- `GET /dashboard/stats/product-groups` - Product group analytics
+- `GET /dashboard/stats/question-types` - Question type analytics
+- `GET /dashboard/stats/performance` - Performance metrics
 
 ### Image Analysis
 - `POST /analyze-image` - **NEW**: Analyze images with custom prompts
@@ -315,6 +341,36 @@ The system uses an enhanced LangGraph workflow with multimodal support:
 - **Error Handling**: Graceful fallbacks for failed image processing
 - **Memory Management**: Efficient handling of large image files
 - **API Rate Limiting**: Built-in protection against abuse
+
+## 📊 Monitoring & Analytics Features
+
+The integrated monitoring system provides comprehensive insights into system performance and usage:
+
+### Real-time Metrics
+- **Query Analytics**: Track total queries, success rates, and response times
+- **Performance Monitoring**: Monitor token usage, confidence scores, and system health
+- **User Behavior**: Analyze question types and product group preferences
+- **System Events**: Track errors, uploads, and component health
+
+### Dashboard Features
+- **Interactive Charts**: Daily activity, question type distribution, and product group analytics
+- **Performance Gauges**: Visual indicators for success rates and confidence scores
+- **Recent Activity**: View latest chat events, document uploads, and system events
+- **Auto-refresh**: Real-time data updates for live monitoring
+
+### Data Collection
+The system automatically logs:
+- User queries and responses
+- Question types (technical specs, troubleshooting, etc.)
+- Product group interactions
+- Response times and performance metrics
+- Document uploads and processing times
+- System errors and health events
+
+### Accessing the Monitoring Dashboard
+1. **Via Streamlit App**: Select "📊 Monitoring Dashboard" from the sidebar
+2. **Via API**: Access dashboard endpoints at `/dashboard/*`
+3. **Real-time Updates**: Data refreshes automatically every 30 seconds
 
 ## 🚀 Future Enhancements
 

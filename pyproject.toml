@@ -29,6 +29,8 @@ pymupdf = "^1.26.3"
 pillow = "^11.3.0"
 requests = "^2.32.4"
 guardrails-ai = "^0.6.6"
+pandas = "^2.1.0"
+plotly = "^5.17.0"
 
 
 [build-system]
