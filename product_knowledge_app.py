@@ -399,6 +399,34 @@ st.markdown("""
     .streaming-message.complete {
         opacity: 1;
     }
+
+    /* Streaming area styling */
+    .streaming-area {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        border: 2px solid #3b82f6;
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 1rem 0;
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+    }
+
+    .streaming-header {
+        color: #1e40af;
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+    }
+
+    .streaming-content {
+        color: #1f2937;
+        line-height: 1.5;
+        font-size: 0.95rem;
+    }
+
+    .streaming-cursor {
+        animation: blink 1s infinite;
+        color: #3b82f6;
+        font-weight: bold;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -456,8 +484,8 @@ def process_streaming_response(response, message_index: int):
     full_content = ""
     metadata = {}
     
-    # Create a placeholder for real-time updates
-    placeholder = st.empty()
+    # Create a placeholder for real-time updates in the streaming area
+    streaming_placeholder = st.empty()
     
     try:
         for line in response.iter_lines():
@@ -483,10 +511,16 @@ def process_streaming_response(response, message_index: int):
                             st.session_state.messages[message_index]["metadata"] = metadata
                             st.session_state.messages[message_index]["is_streaming"] = True
                             
-                            # Update the placeholder with current content using native Streamlit
-                            with placeholder.container():
-                                st.markdown("**Assistant:**")
-                                st.write(full_content + "▋")
+                            # Update the streaming area with current content
+                            with streaming_placeholder.container():
+                                st.markdown("""
+                                <div class="streaming-area">
+                                    <div class="streaming-header">🤖 Assistant is typing...</div>
+                                    <div class="streaming-content">
+                                        """ + full_content + """<span class="streaming-cursor">▋</span>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
                             
                         elif data.get('type') == 'error':
                             st.error(f"Error: {data.get('content', 'Unknown error')}")
@@ -667,25 +701,20 @@ def main():
             is_streaming = message.get("is_streaming", False)
             content = message["content"]
             
-            # Add typing indicator for streaming messages
-            if is_streaming and not content:
-                content = "🤔 Thinking..."
-            
-            # For streaming messages, use native Streamlit components to avoid HTML rendering issues
+            # Skip displaying streaming messages in chat history since they're shown in streaming area
             if is_streaming:
-                st.markdown("**Assistant:**")
-                st.write(content + "▋")
-            else:
-                # Display assistant message with HTML styling for completed messages
-                st.markdown(f"""
-                <div class="message-container">
-                    <div class="assistant-message">
-                        <div class="message-bubble assistant-bubble">
-                            {content}
-                        </div>
+                continue
+            
+            # Display completed assistant message with HTML styling
+            st.markdown(f"""
+            <div class="message-container">
+                <div class="assistant-message">
+                    <div class="message-bubble assistant-bubble">
+                        {content}
                     </div>
                 </div>
-                """, unsafe_allow_html=True)
+            </div>
+            """, unsafe_allow_html=True)
             
             # Show additional info for assistant messages (only when not streaming)
             if "metadata" in message and not is_streaming:
@@ -708,6 +737,27 @@ def main():
     
     st.markdown('</div>', unsafe_allow_html=True)
     
+    
+    # Streaming area - dedicated space for real-time responses
+    if st.session_state.messages and st.session_state.messages[-1].get("is_streaming", False):
+        with st.container():
+            st.markdown("---")
+            st.markdown("""
+            <div class="streaming-area">
+                <div class="streaming-header">🤖 Assistant is typing...</div>
+                <div class="streaming-content" id="streaming-content">
+                    <span class="streaming-cursor">▋</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            streaming_placeholder = st.empty()
+            
+            # Get the current streaming message
+            current_streaming_message = st.session_state.messages[-1]
+            content = current_streaming_message.get("content", "")
+            
+            with streaming_placeholder.container():
+                st.markdown(f"**Assistant:** {content}▋")
     
     # Text input field (takes most space)
     prompt = st.text_input("Ask about product knowledge...", key=f"user_input_{st.session_state.get('text_key', 0)}", label_visibility="collapsed", placeholder="Ask about product knowledge...")
