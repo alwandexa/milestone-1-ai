@@ -539,10 +539,17 @@ def process_streaming_response(response, message_index: int):
                             st.session_state.messages[message_index]["is_streaming"] = False
                             break
                     except json.JSONDecodeError:
+                        # Skip malformed JSON lines instead of breaking
+                        continue
+                    except Exception as parse_error:
+                        # Log parse errors but don't break the stream
+                        print(f"Parse error in streaming: {str(parse_error)}")
                         continue
     except Exception as e:
+        # Log streaming errors but don't throw to avoid triggering fallback
+        print(f"Streaming error: {str(e)}")
         st.error(f"Streaming error: {str(e)}")
-        full_content = f"Error during streaming: {str(e)}"
+        # Don't set full_content to error message to avoid triggering fallback
     
     return full_content, metadata, chain_of_thought
 
@@ -882,6 +889,7 @@ def main():
                 uploaded_image.seek(0)  # Reset file pointer
             
             # Try streaming first
+            streaming_success = False
             try:
                 # Use streaming chat function
                 response = chat_with_documents_stream(
@@ -895,26 +903,30 @@ def main():
                 
                 # Mark streaming as complete
                 st.session_state.messages[assistant_message_index]["is_streaming"] = False
+                streaming_success = True
                 
             except Exception as streaming_error:
+                print(f"Streaming error: {str(streaming_error)}")
                 st.warning("Streaming failed, falling back to regular response...")
                 
-                # Fallback to non-streaming API
-                response = chat_with_documents(
-                    query=current_query,
-                    image_data=image_data,
-                    session_id=get_current_conversation()
-                )
-                
-                # Update the message with the response
-                st.session_state.messages[assistant_message_index]["content"] = response["answer"]
-                st.session_state.messages[assistant_message_index]["metadata"] = {
-                    "sources": response.get("sources", []),
-                    "multimodal_content": response.get("multimodal_content", False),
-                    "extracted_text": response.get("extracted_text")
-                }
-                st.session_state.messages[assistant_message_index]["chain_of_thought"] = response.get("chain_of_thought", [])
-                st.session_state.messages[assistant_message_index]["is_streaming"] = False
+                # Only fallback if streaming actually failed
+                if not streaming_success:
+                    # Fallback to non-streaming API
+                    response = chat_with_documents(
+                        query=current_query,
+                        image_data=image_data,
+                        session_id=get_current_conversation()
+                    )
+                    
+                    # Update the message with the response
+                    st.session_state.messages[assistant_message_index]["content"] = response["answer"]
+                    st.session_state.messages[assistant_message_index]["metadata"] = {
+                        "sources": response.get("sources", []),
+                        "multimodal_content": response.get("multimodal_content", False),
+                        "extracted_text": response.get("extracted_text")
+                    }
+                    st.session_state.messages[assistant_message_index]["chain_of_thought"] = response.get("chain_of_thought", [])
+                    st.session_state.messages[assistant_message_index]["is_streaming"] = False
             
             # Clear both input fields by changing their keys
             st.session_state.text_key = st.session_state.get('text_key', 0) + 1
