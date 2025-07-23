@@ -96,6 +96,7 @@ The web interface will be available at `http://localhost:8501`
 
 ### Chat Interface
 - `POST /chat` - Text-only chat
+- `POST /chat/stream` - **NEW**: Streaming chat with real-time responses
 - `POST /chat/multimodal` - **NEW**: Multimodal chat with images
 
 ### Image Analysis
@@ -104,6 +105,120 @@ The web interface will be available at `http://localhost:8501`
 ### Product Groups
 - `GET /product-groups` - List available product groups
 - `GET /documents/search/product-group/{group}` - Search by product group
+
+## 🔄 Streaming Chat Features
+
+### Real-time Streaming
+The application now supports real-time streaming chat responses, similar to ChatGPT:
+
+```python
+# Streaming chat endpoint
+response = requests.post(
+    "http://localhost:8000/chat/stream",
+    data={"query": "Your question here", "session_id": "optional_session_id"},
+    stream=True
+)
+
+# Process streaming response
+for line in response.iter_lines():
+    if line:
+        data = json.loads(line.decode('utf-8')[6:])  # Remove 'data: ' prefix
+        if data.get('type') == 'content':
+            print(data.get('content', ''), end='', flush=True)
+```
+
+### Streaming Response Format
+The streaming endpoint returns Server-Sent Events (SSE) with the following format:
+
+```json
+{"type": "metadata", "sources": [...], "multimodal_content": false}
+{"type": "content", "content": "Partial response text..."}
+{"type": "content", "content": "More response text..."}
+{"type": "end"}
+```
+
+### Features
+- **Real-time typing indicator**: Shows when the AI is generating a response
+- **Progressive content display**: Text appears as it's generated
+- **Fallback mechanism**: Automatically falls back to regular API if streaming fails
+- **Multimodal support**: Works with both text and image inputs
+- **Session management**: Maintains conversation context across streaming sessions
+- **Chain of Thought**: **NEW**: Shows agent reasoning process in real-time
+
+### Testing Streaming
+Use the provided test script to verify streaming functionality:
+
+```bash
+python test_streaming.py
+```
+
+## 🧠 Chain of Thought (CoT) Features
+
+### Agent Reasoning Transparency
+The application now provides full transparency into the AI's reasoning process:
+
+```python
+# Chain of Thought response format
+{
+    "chain_of_thought": [
+        {
+            "step": "multimodal_processing",
+            "agent": "Input Processor",
+            "thought": "Processing user query: 'What are the main features?'",
+            "status": "started"
+        },
+        {
+            "step": "document_search",
+            "agent": "Document Retriever", 
+            "thought": "Found 3 relevant document chunks",
+            "status": "completed",
+            "details": {"chunks_found": 3}
+        },
+        {
+            "step": "evaluate_results",
+            "agent": "Result Evaluator",
+            "thought": "Evaluation result: Sufficient information found",
+            "status": "completed"
+        },
+        {
+            "step": "generate_answer",
+            "agent": "Answer Generator",
+            "thought": "Generated answer using text-only analysis",
+            "status": "completed"
+        }
+    ]
+}
+```
+
+### Agent Types
+The system uses multiple specialized agents:
+
+1. **Input Processor**: Handles multimodal input (text + images)
+2. **Image Analyzer**: Extracts text and analyzes image content
+3. **Document Retriever**: Searches for relevant documents
+4. **Result Evaluator**: Determines if found information is sufficient
+5. **Answer Generator**: Creates the final response
+
+### Status Types
+- **started**: Agent has begun processing
+- **completed**: Agent successfully completed the task
+- **error**: Agent encountered an error
+- **warning**: Agent completed with warnings
+
+### UI Features
+- **Collapsible CoT display**: Chain of thought shown in expandable sections
+- **Real-time CoT updates**: Shows agent thoughts as they happen during streaming
+- **Status indicators**: Color-coded emoji badges for different status types
+- **Detailed information**: Shows agent details and reasoning steps
+- **Persistent CoT**: Chain of thought remains visible after response completion
+- **Clean interface**: Uses native Streamlit components for better integration
+
+### Testing Chain of Thought
+Use the provided test script to verify CoT functionality:
+
+```bash
+python test_cot.py
+```
 
 ## 🖼️ Multimodal Features
 
